@@ -51,7 +51,7 @@ armMonitor(volatile void *addr)
 }
 
 void
-pinCpu(int cpu)
+pinCpu(int cpu, char *str)
 {
   cpu_set_t  mask;
   CPU_ZERO(&mask);
@@ -69,7 +69,7 @@ pinCpu(int cpu)
   }
   
 #ifdef VERBOSE
-    fprintf(stderr, "PINNED TO CPU: %d\n", cpu);
+  fprintf(stderr, "%s: PINNED TO CPU: %d\n", str, cpu);
 #endif    
 }
 
@@ -170,8 +170,9 @@ epThread(void *arg)
   uint64_t wakeups           = 0;
   uint64_t spurious          = 0;
   uint64_t events            = 0;
-  
-  pinCpu(eparg->cpu);
+  char     name[80];
+  snprintf(name, 80, "EP:%p:%d",this,id);
+  pinCpu(eparg->cpu, name);
   
 #ifdef USE_DOORBELL
   volatile uint64_t *db = &(this->eventSignal.db);
@@ -229,9 +230,12 @@ void * sourceThread(void *arg) {
   source_t this                = sarg->src;
   double   delay               = this->sleep;
   struct timespec thedelay     = { .tv_sec = 0, .tv_nsec = 0 };
-  struct timespec ndelay     = { .tv_sec = 0, .tv_nsec = 0 };
+  struct timespec ndelay       = { .tv_sec = 0, .tv_nsec = 0 };
   struct timespec nrem         = { .tv_sec = 0, .tv_nsec = 0 };
   ep_t     ep                  = this->ep;
+  int      id                  = this->id;
+  char     name[80];
+
 #ifdef USE_DOORBELL
   doorbell_t *db = &(ep->eventSignal.db);
 #endif
@@ -240,8 +244,9 @@ void * sourceThread(void *arg) {
     delay = delay - thedelay.tv_sec;
   }
   thedelay.tv_nsec = delay * (double)NSEC_IN_SECOND;
-  
-  pinCpu(sarg->cpu);
+
+  snprintf(name, 80, "SRC:%p:%d",this,id);
+  pinCpu(sarg->cpu, name);
   source_event_reset(this);
   
   while (1) {
