@@ -11,8 +11,9 @@
 #include <assert.h>
 #include <time.h>
 
-#define USE_DOORBELL
-#define USE_MONITOR 
+//#define BUSY_POLL
+//#define USE_DOORBELL
+//#define USE_MONITOR 
 
 #define NSEC_IN_SECOND 1000000000
 
@@ -202,8 +203,7 @@ epThread(void *arg)
       // spurious wakeup
       spurious++;
       continue;
-    }
-    
+    }    
 #endif
     for (int i=0; i<Num_Sources; i++) {
       source_t src = &(Sources[i]);
@@ -232,11 +232,11 @@ void * sourceThread(void *arg) {
   struct timespec thedelay     = { .tv_sec = 0, .tv_nsec = 0 };
   struct timespec ndelay       = { .tv_sec = 0, .tv_nsec = 0 };
   struct timespec nrem         = { .tv_sec = 0, .tv_nsec = 0 };
-  ep_t     ep                  = this->ep;
   int      id                  = this->id;
   char     name[80];
 
 #ifdef USE_DOORBELL
+  ep_t     ep                  = this->ep;
   doorbell_t *db = &(ep->eventSignal.db);
 #endif
   if (delay >= 1.0) {
@@ -283,6 +283,19 @@ main(int argc, char **argv)
     return(-1);
   }
 
+  // create sources but don't start them 
+  Num_Sources = argc - 4;
+  Sources     = malloc(sizeof(struct Source)*Num_Sources);
+  // create sources
+  srcsleep    = strtod(argv[3],NULL);
+  for (int i=0; i<Num_Sources; i++) {
+    source_t src = &Sources[i];
+    src->ep      = &ep;
+    src->sleep   = srcsleep;
+    src->id      = id; id++;
+    source_event_reset(src);
+  }
+  
   // initalize event processor (only one right now)
   ep.id        = id; id++;
   ep.maxevents = atoi(argv[1]);
@@ -300,18 +313,9 @@ main(int argc, char **argv)
   pthread_barrier_wait(&epbarrier);
   pthread_barrier_init(&epbarrier, NULL, 2);  // reset the barrier 
 
-  // create sources
-  srcsleep    = strtod(argv[3],NULL);
-  Num_Sources = argc - 4;
-  Sources     = malloc(sizeof(struct Source)*Num_Sources);
   for (int i=0; i<Num_Sources; i++) {
-    source_t src = &Sources[i];
-    src->ep      = &ep;
-    src->sleep   = srcsleep;
-    src->id      = id; id++;
-    // source thread will initlize its event;
     sarg      = malloc(sizeof(struct SourceThreadArg));
-    sarg->src = src;
+    sarg->src = &(Sources[i]);
     sarg->cpu = atoi(argv[4+i]);
     pthread_create(&tid, NULL, sourceThread, sarg);
   }
