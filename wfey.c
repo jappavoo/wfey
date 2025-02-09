@@ -9,9 +9,12 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <assert.h>
+#include <time.h>
 
 #define USE_DOORBELL
 #define USE_MONITOR 
+
+#define NSEC_IN_SECOND 1000000000
 
 #ifdef COHERENCY_LINE_SIZE
 // passed at compile time 
@@ -70,7 +73,7 @@ pinCpu(int cpu)
 #endif    
 }
 
-enum SourceEventState { RESET=0, ACTIVE=1 };
+enum SourceEventState { SRC_EVENT_RESET=0, SRC_EVENT_ACTIVE=1 };
 union Event {
   char padding[CACHE_LINE_SIZE];
   volatile int state;
@@ -80,6 +83,7 @@ typedef struct EventProcessor * ep_t;
 
 struct Source {
   ep_t ep;
+  double sleep;
   int id;
   union Event event;
 };
@@ -88,31 +92,39 @@ _Static_assert(sizeof(union Event)==CACHE_LINE_SIZE,
 
 typedef struct Source * source_t;
 void source_event_reset(source_t this) {
-  assert(__sync_bool_compare_and_swap(&(this->event.state),ACTIVE,RESET));
+  __atomic_store_n(&(this->event.state), SRC_EVENT_RESET,
+		   __ATOMIC_SEQ_CST);
   // FIXME: add end of event time here
 }
 
 void source_event_activate(source_t this)  {
   // FIXME: add start of event time here
-  assert(__sync_bool_compare_and_swap(&(this->event.state),RESET,ACTIVE));
+  __atomic_store_n(&(this->event.state), SRC_EVENT_ACTIVE,
+		   __ATOMIC_SEQ_CST);
 }
 
 bool source_event_isActive(source_t this)   {
-  return this->event.state == ACTIVE;
+  return __atomic_load_n(&(this->event.state),
+			 __ATOMIC_SEQ_CST) == SRC_EVENT_ACTIVE;
 }
 int            Num_Sources = 0;
 struct Source *Sources     = NULL;
 
 typedef volatile uint64_t doorbell_t;
 enum { DOORBELL_RESET=0, DOORBELL_PRESSED=1 };
-static inline doorbell_t doorbell_reset(doorbell_t *db)
+static inline doorbell_t doorbell_isPressedAndReset(doorbell_t *db)
 {
-  return __sync_val_compare_and_swap(db, DOORBELL_PRESSED, DOORBELL_RESET);
+  return __atomic_exchange_n(db, DOORBELL_RESET, __ATOMIC_SEQ_CST);
 }
 
-static inline doorbell_t doorbell_press(doorbell_t *db)
+static inline void doorbell_reset(doorbell_t *db)
 {
-  return __sync_val_compare_and_swap(db, DOORBELL_RESET, DOORBELL_PRESSED);
+  __atomic_store_n(db, DOORBELL_RESET, __ATOMIC_SEQ_CST);
+}
+
+static inline void doorbell_press(doorbell_t *db)
+{
+  __atomic_store_n(db, DOORBELL_PRESSED, __ATOMIC_SEQ_CST);
 }
 
 union EventSignal {
@@ -121,9 +133,8 @@ union EventSignal {
   doorbell_t db;
 #endif
 };
-
-//_Static_assert(sizeof(union EventSignal)==CACHE_LINE_SIZE),
-//	       "union EventSignal bad size");
+_Static_assert(sizeof(union EventSignal)==CACHE_LINE_SIZE,
+	       "union EventSignal bad size");
 
 struct EventProcessor {
   union EventSignal eventSignal;
@@ -159,17 +170,16 @@ epThread(void *arg)
   uint64_t wakeups           = 0;
   uint64_t spurious          = 0;
   uint64_t events            = 0;
-  uint64_t dbval;
   
   pinCpu(eparg->cpu);
   
 #ifdef USE_DOORBELL
   volatile uint64_t *db = &(this->eventSignal.db);
-  (void)doorbell_reset(db);
+  doorbell_reset(db);
 #endif
   
 #ifdef USE_MONITOR  
-  assert(armMonitor(db)==0);
+  armMonitor(db);
 #endif
 
   // we are now ready to accept events
@@ -179,17 +189,20 @@ epThread(void *arg)
 #ifndef BUSY_POLL
     WFE();
 #ifdef USE_MONITOR
-    armMonitor(db); // re-arm immediately
+    // re-arm immediately to ensure do no loose
+    // event signals that happen after process
+    // but before going halting on WFE
+    armMonitor(db);                     
 #endif
 #endif
     wakeups++;
 #ifdef USE_DOORBELL    
-    dbval = doorbell_reset(db);
-    if (dbval != DOORBELL_PRESSED) {
+    if (!doorbell_isPressedAndReset(db)) {
       // spurious wakeup
       spurious++;
       continue;
     }
+    
 #endif
     for (int i=0; i<Num_Sources; i++) {
       source_t src = &(Sources[i]);
@@ -213,16 +226,29 @@ struct SourceThreadArg {
 
 void * sourceThread(void *arg) {
   struct SourceThreadArg *sarg = arg;
-  source_t this  = sarg->src;
-  ep_t     ep    = this->ep;
+  source_t this                = sarg->src;
+  double   delay               = this->sleep;
+  struct timespec thedelay     = { .tv_sec = 0, .tv_nsec = 0 };
+  struct timespec ndelay     = { .tv_sec = 0, .tv_nsec = 0 };
+  struct timespec nrem         = { .tv_sec = 0, .tv_nsec = 0 };
+  ep_t     ep                  = this->ep;
 #ifdef USE_DOORBELL
   doorbell_t *db = &(ep->eventSignal.db);
 #endif
+  if (delay >= 1.0) {
+    thedelay.tv_sec = (time_t)delay;
+    delay = delay - thedelay.tv_sec;
+  }
+  thedelay.tv_nsec = delay * (double)NSEC_IN_SECOND;
   
   pinCpu(sarg->cpu);
-
+  source_event_reset(this);
+  
   while (1) {
-    sleep(1.0);
+    ndelay = thedelay; 
+    while (nanosleep(&ndelay,&nrem)<0) {
+      ndelay = nrem;
+    }
     source_event_activate(this);
 #ifdef USE_DOORBELL
     doorbell_press(db);
@@ -245,8 +271,9 @@ main(int argc, char **argv)
   struct EventProcessor   ep;
   struct EPThreadArg      eparg;
   struct SourceThreadArg *sarg;
+  double                  srcsleep;
   
-  if (argc < 4) {
+  if (argc < 5) {
     fprintf(stderr, USAGE, argv[0]);
     return(-1);
   }
@@ -269,17 +296,19 @@ main(int argc, char **argv)
   pthread_barrier_init(&epbarrier, NULL, 2);  // reset the barrier 
 
   // create sources
-  Num_Sources = argc - 3;
-  Sources = malloc(sizeof(struct Source)*Num_Sources);
+  srcsleep    = strtod(argv[3],NULL);
+  Num_Sources = argc - 4;
+  Sources     = malloc(sizeof(struct Source)*Num_Sources);
   for (int i=0; i<Num_Sources; i++) {
     source_t src = &Sources[i];
     src->ep      = &ep;
+    src->sleep   = srcsleep;
     src->id      = id; id++;
     // source thread will initlize its event;
     sarg      = malloc(sizeof(struct SourceThreadArg));
     sarg->src = src;
-    sarg->cpu = atoi(argv[3+i]);
-    pthread_create(&tid, NULL, sourceThread, &sarg);
+    sarg->cpu = atoi(argv[4+i]);
+    pthread_create(&tid, NULL, sourceThread, sarg);
   }
   // wait for event processor to finish
   pthread_barrier_wait(&epbarrier);
