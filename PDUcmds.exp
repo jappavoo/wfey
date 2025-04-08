@@ -1,0 +1,31 @@
+#!/bin/expect
+
+set USER "sesauser"
+
+set measurementOP ""
+set valueOP ""
+
+set PWD [lindex $argv 0];
+set LOOP [lindex $argv 1];
+set PDU [lindex $argv 2];
+set DEV [lindex $argv 3];
+set OUT [lindex $argv 4];
+set MES [lindex $argv 5]; # if this value is set, measurementOP no longer NOP
+set NUM [lindex $argv 6]; # if this is set -- send it 'value' as last argument
+
+if {$MES != ""} {set measurementOP "measurement"}
+if {$NUM eq 1} {set valueOP "value"}
+
+spawn ssh $USER@$PDU
+expect "($USER@$PDU) Password: "
+send -- "$PWD\r"
+
+for {set i 0} {$i < $LOOP} {incr i 1} {
+    expect "$USER > "
+    send -- "get dev $DEV outlet $OUT $measurementOP $MES $valueOP\r"
+}
+
+expect "$USER > "
+send -- "exit\r"
+expect eof
+
