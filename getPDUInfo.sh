@@ -87,28 +87,28 @@ decodeMeasurement() {
     case $index in 
 	'0') 
 	    MES=""
-	    break;;
+	    ;;
 	'1') 
 	    MES=$apparentPower
-	    break;;
+	    ;;
 	'2') 
 	    MES=$current
-	    break;;
+	    ;;
 	'3') 
 	    MES=$realPower
-	    break;;
+	    ;;
 	'4') 
 	    MES=$currentCrestFactor
-	    break;;
+	    ;;
 	'5') 
 	    MES=$voltage
-	    break;;
+	    ;;
 	'6') 
 	    MES=$energy
-	    break;;
+	    ;;
 	'7') 
 	    MES=$powerFactor
-	    break;;
+	    ;;
     esac
 }
 
@@ -212,5 +212,9 @@ fi
 
 echo "./expect_test.exp $PASSWORD $LOOP $PDU $DEV $OUT $MES $NUM"
 
-./expect_test.exp $PASSWORD $LOOP $PDU $DEV $OUT $MES $NUM
+DATE=$(date '+%H%M%S')
+
+./PDUcmds.exp $PASSWORD $LOOP $PDU $DEV $OUT $MES $NUM > tmp.txt
+#echo "file :'${LOOP}_${PDU}_${DEV}_${OUT}_${MES}_${NUM}_${DATE}.pdu'"
+cat tmp.txt | grep -E '^[0-9\.]+' > ./output/${LOOP}_${PDU}_${DEV}_${OUT}_${MES}_${NUM}_${DATE}.pdu
 
