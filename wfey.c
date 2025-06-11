@@ -27,7 +27,7 @@
 
 #endif
 
-#define USAGE "%s <max events> <event processor cpu> <source cpu> [[source cpu]...]\n"
+#define USAGE "%s <max events> <event processor cpu> <time to sleep> <# of source cpu> [[source cpu]...]\n"
 #define VERBOSE
 
 static inline void
@@ -246,6 +246,12 @@ void * sourceThread(void *arg) {
   thedelay.tv_nsec = delay * (double)NSEC_IN_SECOND;
 
   snprintf(name, 80, "SRC:%p:%d",this,id);
+
+#ifdef VERBOSE
+  fprintf(stderr, "%s: TimeDelay -- %lld.%.9ld\n",
+	  __FUNCTION__, (long long)thedelay.tv_sec, thedelay.tv_nsec);
+#endif
+  
   pinCpu(sarg->cpu, name);
   source_event_reset(this);
   
