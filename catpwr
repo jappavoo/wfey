@@ -1,1 +1,0 @@
-while sleep 0.5; do cat /sys/class/hwmon/hwmon0/power1_input; done
