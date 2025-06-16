@@ -11,11 +11,15 @@
 #include <assert.h>
 #include <time.h>
 
+#define NYI { fprintf(stderr, "%s: %d: NYI\n", __func__, __LINE__); assert(0); }
+
 //#define BUSY_POLL
 //#define USE_DOORBELL
 //#define USE_MONITOR 
 
-#define NSEC_IN_SECOND 1000000000
+#define CLOCK_SOURCE CLOCK_MONOTONIC
+#define NSEC_IN_SECOND (1000000000)
+#define NULL_WORK_COUNT (10000)
 
 #ifdef COHERENCY_LINE_SIZE
 // passed at compile time 
@@ -29,6 +33,27 @@
 
 #define USAGE "%s <max events> <event processor cpu> <time to sleep> <# of source cpu> [[source cpu]...]\n"
 #define VERBOSE
+
+// Time  handling code
+typedef struct timespec ts_t;
+
+static inline int
+ts_now(ts_t *now)
+{
+  if (clock_gettime(CLOCK_SOURCE, now) == -1) {
+    perror("clock_gettime");
+    NYI;
+    return 0;
+  }
+  return 1;
+}
+
+static inline uint64_t
+ts_diff(ts_t start, ts_t end)
+{
+  uint64_t diff=(end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec);
+  return diff;
+} 
 
 static inline void
 SEV()
@@ -86,6 +111,12 @@ struct Source {
   ep_t ep;
   double sleep;
   int id;
+  ts_t start_ts;
+  ts_t end_ts;
+  uint64_t totalns;
+  uint64_t minns;
+  uint64_t maxns;
+  uint64_t count;
   union Event event;
 };
 _Static_assert(sizeof(union Event)==CACHE_LINE_SIZE,
@@ -96,10 +127,15 @@ void source_event_reset(source_t this) {
   __atomic_store_n(&(this->event.state), SRC_EVENT_RESET,
 		   __ATOMIC_SEQ_CST);
   // FIXME: add end of event time here
+  ts_now(&(this->end_ts));
+  uint64_t ns = ts_diff(this->start_ts, this->end_ts);
+  this->totalns += ns;
+  this->count++;
 }
 
 void source_event_activate(source_t this)  {
   // FIXME: add start of event time here
+  ts_now(&(this->start_ts));
   __atomic_store_n(&(this->event.state), SRC_EVENT_ACTIVE,
 		   __ATOMIC_SEQ_CST);
 }
@@ -143,6 +179,12 @@ struct EventProcessor {
   int id;
 };
 
+static inline void nullwork() {
+  for (uint64_t i=0; i<NULL_WORK_COUNT; i++) {
+    asm volatile ("nop");
+  }
+}
+
 void
 EP_handle_event(ep_t this, source_t src)
 {
@@ -151,7 +193,7 @@ EP_handle_event(ep_t this, source_t src)
 	  __FUNCTION__, this, this->id, src, src->id);
 #endif
   // working hard on the event ;-)
-  
+  nullwork();
   source_event_reset(src);
 }
 
