@@ -37,4 +37,4 @@ wfe_db_mon_wfey.o:
 	${CC} ${CFLAGS} -c -DUSE_DOORBELL -USE_MONITOR -o $@ wfey.c 
 
 clean:
-	rm -f $(wildcard *.o ${TARGETS})
+	rm -f $(wildcard *.o *.d ${TARGETS})
