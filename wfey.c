@@ -131,6 +131,13 @@ void source_event_reset(source_t this) {
   uint64_t ns = ts_diff(this->start_ts, this->end_ts);
   this->totalns += ns;
   this->count++;
+
+  if ( ns < this->minns ) { this->minns = ns; }
+  if ( ns > this->maxns ) { this->maxns = ns; }
+  #ifdef VERBOSE
+  fprintf(stderr, "%d: Diff=%ld, TotalNS=%ld, Count=%ld, Min=%ld, Max=%ld\n",
+	  this->id, ns, this->totalns, this->count, this->minns, this->maxns);
+  #endif
 }
 
 void source_event_activate(source_t this)  {
@@ -288,14 +295,9 @@ void * sourceThread(void *arg) {
   thedelay.tv_nsec = delay * (double)NSEC_IN_SECOND;
 
   snprintf(name, 80, "SRC:%p:%d",this,id);
-
-#ifdef VERBOSE
-  fprintf(stderr, "%s: TimeDelay -- %lld.%.9ld\n",
-	  __FUNCTION__, (long long)thedelay.tv_sec, thedelay.tv_nsec);
-#endif
   
   pinCpu(sarg->cpu, name);
-  source_event_reset(this);
+  // source_event_reset(this); // CJ removing this line bc init already done in main
   
   while (1) {
     ndelay = thedelay; 
@@ -369,6 +371,14 @@ main(int argc, char **argv)
   }
   // wait for event processor to finish
   pthread_barrier_wait(&epbarrier);
+  // latency logging
+  fprintf(stdout, "ID,Min,Max,Mean\n");
+  for (int i=0; i<Num_Sources; i++) {
+    source_t src = &Sources[i];
+    uint64_t mean = (src->totalns / src->count);
+    fprintf(stdout, "%d,%"PRIu64",%"PRIu64",%"PRIu64"\n",
+	    src->id, src->minns, src->maxns, mean);
+  }
   return 0;
 }
  
