@@ -15,7 +15,9 @@
 
 //#define BUSY_POLL
 //#define USE_DOORBELL
-//#define USE_MONITOR 
+//#define USE_MONITOR
+
+#define IDLE_HACK
 
 #define CLOCK_SOURCE CLOCK_MONOTONIC
 #define NSEC_IN_SECOND (1000000000)
@@ -33,6 +35,15 @@
 
 #define USAGE "%s <max events> <event processor cpu> <time to sleep> <# of source cpu> [[source cpu]...]\n"
 #define VERBOSE
+#ifdef IDLE_HACK
+pthread_barrier_t idlebarrier;
+int flag = 0;
+
+#define CPU_PER_NODE 80
+#define RUNNER_CPU CPU_PER_NODE // the main function and scripts are running on first core of node2
+#define EVENT_CPU_ID 0
+#define NUM_EVENT_CPUS 1 // currently locked in at 1, but should be dynamic in the future
+#endif
 
 // Time  handling code
 typedef struct timespec ts_t;
@@ -65,6 +76,12 @@ static inline void
 WFE() 
 {
   asm volatile("wfe \n\t");
+}
+
+static inline void
+WFI()
+{
+  asm volatile("wfi \n\t");
 }
 
 static inline uint64_t 
@@ -317,6 +334,29 @@ void * sourceThread(void *arg) {
 }
 
 
+struct IdleThreadArg {
+  int                cpu;
+  pthread_barrier_t  *barrier;
+  int*               flag;
+};
+
+void * idleThread(void *arg) {
+  struct IdleThreadArg *iarg = (struct IdleThreadArg *)arg;
+  char name[80];
+
+  snprintf(name, 80, "IDLE:%d",iarg->cpu);
+
+  pinCpu(iarg->cpu, name);
+
+  while ( !((flag)) ) {
+    WFI();
+  }
+
+  pthread_barrier_wait(&idlebarrier);
+  return NULL;
+}
+
+
 int
 main(int argc, char **argv)
 {
@@ -333,8 +373,15 @@ main(int argc, char **argv)
     return(-1);
   }
 
-  // create sources but don't start them 
+  pinCpu(RUNNERCPU, "main thread");
+  
+  // create sources but don't start them
+#ifndef IDLE_HACK
   Num_Sources = argc - 4;
+#else
+  Num_Sources = atoi(argv[4]);
+#endif
+  
   Sources     = malloc(sizeof(struct Source)*Num_Sources);
   // create sources
   srcsleep    = strtod(argv[3],NULL);
@@ -344,6 +391,10 @@ main(int argc, char **argv)
     src->sleep   = srcsleep;
     src->id      = id; id++;
     source_event_reset(src);
+    src->totalns = 0;
+    src->minns   = (uint64_t)-1;
+    src->maxns   = 0;
+    src->count   = 0;
   }
   
   // initalize event processor (only one right now)
@@ -356,21 +407,56 @@ main(int argc, char **argv)
   pthread_barrier_init(&epbarrier, NULL, 2);
   eparg.ep      = &ep;
   eparg.barrier = &epbarrier;
-  eparg.cpu     = atoi(argv[2]);
+  eparg.cpu     = EVENT_CPU_ID; //atoi(argv[2]);
   pthread_create(&tid, NULL, epThread, &eparg);
 
   // wait for event processor to be ready
   pthread_barrier_wait(&epbarrier);
   pthread_barrier_init(&epbarrier, NULL, 2);  // reset the barrier 
 
+#ifdef IDLE_HACK
+  struct IdleThreadArg *iarg;
+  // first node should have only event handlers on it, rest should be idle
+  // second node will have the sources and one node that will run main + scripts
+  int num_idle = (CPU_PER_NODE-NUM_EVENT_CPUS) + (CPU_PER_NODE-Num_Sources+1);
+  int cpuid = CPU_PER_NODE+1; // starting at numa 2 + runner thread -- for sources id
+  int end_flag = 0;
+  
+  pthread_barrier_init(&idlebarrier, NULL, num_idle);
+  for (int i = 1; i < 80; i++){ // all but the event cpu on the first node
+    iarg = malloc(sizeof(struct IdleThreadArg));
+    iarg->cpu = i;
+    iarg->barrier = &idlebarrier;
+    iarg->flag = &end_flag;
+    pthread_create(&tid, NULL, idleThread, iarg);
+  }
+  for (int i = CPU_PER_NODE+Num_Sources+1; i < 160; i++){ // all other after sources + runner
+    iarg = malloc(sizeof(struct IdleThreadArg));
+    iarg->cpu = i;
+    iarg->barrier = &idlebarrier;
+    iarg->flag = &end_flag;
+    pthread_create(&tid, NULL, idleThread, iarg);
+  }
+#endif
+  
   for (int i=0; i<Num_Sources; i++) {
     sarg      = malloc(sizeof(struct SourceThreadArg));
     sarg->src = &(Sources[i]);
+#ifndef IDLE_HACK
     sarg->cpu = atoi(argv[4+i]);
+#else
+    sarg->cpu = cpuid++;
+#endif
     pthread_create(&tid, NULL, sourceThread, sarg);
   }
   // wait for event processor to finish
   pthread_barrier_wait(&epbarrier);
+
+#ifdef IDLE_HACK
+  flag = 1;
+  pthread_barrier_wait(&idlebarrier);
+#endif
+  
   // latency logging
   fprintf(stdout, "ID,Min,Max,Mean\n");
   for (int i=0; i<Num_Sources; i++) {
