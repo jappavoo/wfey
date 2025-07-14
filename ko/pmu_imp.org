@@ -1,0 +1,48 @@
+* Background Knowledge
+** V7
+*** Reading
+[[https://pittrasg.github.io/blog/2020/pmusarm/][ARM PMU v7]]
+[[https://lnxblog.github.io/2020/02/02/arm-pmu.html][v7 more in-depth]]
+*** Code
+[[https://github.com/prabindh/peemuperf/blob/master/v7_pmu.S][PMU with MCR and MRC v7]]
+[[https://github.com/lnxblog/ARM_PMU_TEST/tree/master][Simple PMU Imp]]
+
+** V8
+*** Reading
+[[https://zhiyisun.github.io/2016/03/02/How-to-Use-Performance-Monitor-Unit-(PMU)-of-64-bit-ARMv8-A-in-Linux.html][Tutorial -- Not indepth]]
+*** Code
+[[https://github.com/zhiyisun/enable_arm_pmu/tree/dev][In-depth example for cycle counters MSR/MRS]]
+[[https://github.com/jerinjacobk/armv8_pmu_cycle_counter_el0/tree/master][Well Commented PMU module -- with counter]]
+[[https://github.com/KeccakTeam/KeccakCodePackage/blob/f07a7f614179b431ebfc8b97f93c563368c969ed/support/Kernel-PMU/enable_arm_pmu.c][Enabling PMU -- Good Defines for Accessing PMU Registers]]
+
+** System Info
+[[https://developer.arm.com/documentation/101928/0101/Performance-Monitoring-Unit-Extension-support/PMU-events?lang=en][PMU Events -- Can Monitor These]]
+[[https://elixir.bootlin.com/linux/v6.16-rc5/source/drivers/perf/arm_cspmu/arm_cspmu.h#L73][PMU Register Offsets]]
+[[https://elixir.bootlin.com/linux/v6.16-rc5/source/arch/arm/include/asm/arm_pmuv3.h#L14][Translations of Register Accesses]]
+*** Reference Manual
+[[https://cs140e.sergio.bz/docs/ARMv8-Reference-Manual.pdf#G24.5262619][PMUSERENR_EL0 -- PMU Enabling User Mode]]
+[[https://cs140e.sergio.bz/docs/ARMv8-Reference-Manual.pdf#G24.5251517][PMEVTYPER -- PMU Event Type Configurer]]
+[[https://cs140e.sergio.bz/docs/ARMv8-Reference-Manual.pdf#G24.5247611][PMCR_EL0 -- PM Control Register]]
+[[https://cs140e.sergio.bz/docs/ARMv8-Reference-Manual.pdf#G24.5246201][PMCNTENSET_EL0 -- PM Count Enable Set Registers]]
+[[https://cs140e.sergio.bz/docs/ARMv8-Reference-Manual.pdf#G22.7903175][Common PMU Event Numbers]]
+
+
+** Other
+[[https://github.com/icl-utk-edu/papi/tree/master][PAPI - Performance App Prog Interface]] -- this does work for v8 but feels bloated for our purpose
+
+* Steps to Implement
+** Enabling
+PMUSERENR_EL0 -- Set EN, ER, CR in the register to 1
+- This enables user mode reading, event counter reading, and cycle counter reading
+
+PMCR_EL0 -- Set C, P, E in reg to 1
+- This resets the cycle and event counter and it enables all counters set by ~PMCNTENSET_EL0~
+
+PMCNTENSET_EL0 -- Set C & other event counters
+- C will enable the cycle counter
+- Other bits turned on will enable their corresponding ~PMEVCNTR<n>_EL0~
+
+PMEVTYPER<n>_EL0 -- Configures event counter n
+- Use evtCount[9:0] (and evtCount[15:10] if more space needed) to choose which event to configure reg to
+- 0x000 --> 0x03F will be the common <micro>architectural events
+- 0x040 --> 0x0BF are the ARM recommended common events (??? not sure what makes them reccomended)
