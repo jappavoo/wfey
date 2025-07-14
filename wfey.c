@@ -34,7 +34,7 @@
 #endif
 
 #define USAGE "%s <max events> <event processor cpu> <time to sleep> <# of source cpu> [[source cpu]...]\n"
-#define VERBOSE
+//#define VERBOSE
 #ifdef IDLE_HACK
 pthread_barrier_t idlebarrier;
 int flag = 0;
@@ -373,7 +373,7 @@ main(int argc, char **argv)
     return(-1);
   }
 
-  pinCpu(RUNNERCPU, "main thread");
+  pinCpu(RUNNER_CPU, "main thread");
   
   // create sources but don't start them
 #ifndef IDLE_HACK
@@ -418,10 +418,10 @@ main(int argc, char **argv)
   struct IdleThreadArg *iarg;
   // first node should have only event handlers on it, rest should be idle
   // second node will have the sources and one node that will run main + scripts
-  int num_idle = (CPU_PER_NODE-NUM_EVENT_CPUS) + (CPU_PER_NODE-Num_Sources+1);
+  int num_idle = (CPU_PER_NODE-NUM_EVENT_CPUS) + (CPU_PER_NODE-Num_Sources-1);
   int cpuid = CPU_PER_NODE+1; // starting at numa 2 + runner thread -- for sources id
   int end_flag = 0;
-  
+
   pthread_barrier_init(&idlebarrier, NULL, num_idle);
   for (int i = 1; i < 80; i++){ // all but the event cpu on the first node
     iarg = malloc(sizeof(struct IdleThreadArg));
@@ -456,7 +456,6 @@ main(int argc, char **argv)
   flag = 1;
   pthread_barrier_wait(&idlebarrier);
 #endif
-  
   // latency logging
   fprintf(stdout, "ID,Min,Max,Mean\n");
   for (int i=0; i<Num_Sources; i++) {
