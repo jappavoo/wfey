@@ -17,8 +17,6 @@
 //#define USE_DOORBELL
 //#define USE_MONITOR
 
-#define IDLE_HACK
-
 #define CLOCK_SOURCE CLOCK_MONOTONIC
 #define NSEC_IN_SECOND (1000000000)
 #define NULL_WORK_COUNT (10000)
@@ -35,18 +33,20 @@
 
 #define USAGE "%s <max events> <event processor cpu> <time to sleep> <# of source cpu> [[source cpu]...]\n"
 //#define VERBOSE
-#ifdef IDLE_HACK
-pthread_barrier_t idlebarrier;
-int flag = 0;
 
+// Idling Macros
 #define CPU_PER_NODE 80
 #define RUNNER_CPU CPU_PER_NODE // the main function and scripts are running on first core of node2
 #define EVENT_CPU_ID 0
 #define NUM_EVENT_CPUS 1 // currently locked in at 1, but should be dynamic in the future
-#endif
+
+pthread_barrier_t idlebarrier;
 
 // Time  handling code
 typedef struct timespec ts_t;
+
+// Exit Condition
+int flag = 0;
 
 static inline int
 ts_now(ts_t *now)
@@ -151,10 +151,10 @@ void source_event_reset(source_t this) {
 
   if ( ns < this->minns ) { this->minns = ns; }
   if ( ns > this->maxns ) { this->maxns = ns; }
-  #ifdef VERBOSE
+#ifdef VERBOSE
   fprintf(stderr, "%d: Diff=%ld, TotalNS=%ld, Count=%ld, Min=%ld, Max=%ld\n",
 	  this->id, ns, this->totalns, this->count, this->minns, this->maxns);
-  #endif
+#endif
 }
 
 void source_event_activate(source_t this)  {
@@ -289,6 +289,7 @@ epThread(void *arg)
 struct SourceThreadArg {
   source_t src;
   int      cpu;
+  pthread_barrier_t *barrier;
 };
 
 void * sourceThread(void *arg) {
@@ -314,9 +315,10 @@ void * sourceThread(void *arg) {
   snprintf(name, 80, "SRC:%p:%d",this,id);
   
   pinCpu(sarg->cpu, name);
-  // source_event_reset(this); // CJ removing this line bc init already done in main
+
+  pthread_barrier_wait(sarg->barrier); // waits for all srcs to be ready then sends events
   
-  while (1) {
+  while ( !flag ) {
     ndelay = thedelay; 
     while (nanosleep(&ndelay,&nrem)<0) {
       ndelay = nrem;
@@ -329,7 +331,7 @@ void * sourceThread(void *arg) {
     SEV();
 #endif
   }
-  
+  free(sarg);
   return NULL;
 }
 
@@ -337,7 +339,6 @@ void * sourceThread(void *arg) {
 struct IdleThreadArg {
   int                cpu;
   pthread_barrier_t  *barrier;
-  int*               flag;
 };
 
 void * idleThread(void *arg) {
@@ -348,11 +349,12 @@ void * idleThread(void *arg) {
 
   pinCpu(iarg->cpu, name);
 
-  while ( !((flag)) ) {
+  while ( !flag ) {
     WFI();
   }
 
   pthread_barrier_wait(&idlebarrier);
+  free(iarg);
   return NULL;
 }
 
@@ -360,6 +362,7 @@ void * idleThread(void *arg) {
 int
 main(int argc, char **argv)
 {
+  /* ------- Variables ------- */
   int                     id=0;
   pthread_t               tid;
   pthread_barrier_t       epbarrier;
@@ -367,6 +370,7 @@ main(int argc, char **argv)
   struct EPThreadArg      eparg;
   struct SourceThreadArg *sarg;
   double                  srcsleep;
+  pthread_barrier_t       srcbarrier;
   
   if (argc < 5) {
     fprintf(stderr, USAGE, argv[0]);
@@ -376,12 +380,10 @@ main(int argc, char **argv)
   pinCpu(RUNNER_CPU, "main thread");
   
   // create sources but don't start them
-#ifndef IDLE_HACK
-  Num_Sources = argc - 4;
-#else
+  //Num_Sources = argc - 4;
   Num_Sources = atoi(argv[4]);
-#endif
-  
+
+  /* ------- Init Sources ------- */
   Sources     = malloc(sizeof(struct Source)*Num_Sources);
   // create sources
   srcsleep    = strtod(argv[3],NULL);
@@ -396,7 +398,29 @@ main(int argc, char **argv)
     src->maxns   = 0;
     src->count   = 0;
   }
-  
+
+  /* ------- Init and Start Idle Cores ------- */
+  struct IdleThreadArg *iarg;
+  // first node should have only event handlers on it, rest should be idle
+  // second node will have the sources and one node that will run main + scripts
+  int num_idle = (CPU_PER_NODE-NUM_EVENT_CPUS) + (CPU_PER_NODE-Num_Sources-1);
+  int cpuid = CPU_PER_NODE+1; // starting at numa 2 + runner thread -- for sources id
+
+  pthread_barrier_init(&idlebarrier, NULL, num_idle);
+  for (int i = 1; i < 80; i++){ // all but the event cpu on the first node
+    iarg = malloc(sizeof(struct IdleThreadArg));
+    iarg->cpu = i;
+    iarg->barrier = &idlebarrier;
+    pthread_create(&tid, NULL, idleThread, iarg);
+  }
+  for (int i = CPU_PER_NODE+Num_Sources+1; i < 160; i++){ // all other after sources + runner
+    iarg = malloc(sizeof(struct IdleThreadArg));
+    iarg->cpu = i;
+    iarg->barrier = &idlebarrier;
+    pthread_create(&tid, NULL, idleThread, iarg);
+  }
+
+  /* ------- Init and Run Event Processor ------- */
   // initalize event processor (only one right now)
   ep.id        = id; id++;
   ep.maxevents = atoi(argv[1]);
@@ -414,56 +438,33 @@ main(int argc, char **argv)
   pthread_barrier_wait(&epbarrier);
   pthread_barrier_init(&epbarrier, NULL, 2);  // reset the barrier 
 
-#ifdef IDLE_HACK
-  struct IdleThreadArg *iarg;
-  // first node should have only event handlers on it, rest should be idle
-  // second node will have the sources and one node that will run main + scripts
-  int num_idle = (CPU_PER_NODE-NUM_EVENT_CPUS) + (CPU_PER_NODE-Num_Sources-1);
-  int cpuid = CPU_PER_NODE+1; // starting at numa 2 + runner thread -- for sources id
-  int end_flag = 0;
-
-  pthread_barrier_init(&idlebarrier, NULL, num_idle);
-  for (int i = 1; i < 80; i++){ // all but the event cpu on the first node
-    iarg = malloc(sizeof(struct IdleThreadArg));
-    iarg->cpu = i;
-    iarg->barrier = &idlebarrier;
-    iarg->flag = &end_flag;
-    pthread_create(&tid, NULL, idleThread, iarg);
-  }
-  for (int i = CPU_PER_NODE+Num_Sources+1; i < 160; i++){ // all other after sources + runner
-    iarg = malloc(sizeof(struct IdleThreadArg));
-    iarg->cpu = i;
-    iarg->barrier = &idlebarrier;
-    iarg->flag = &end_flag;
-    pthread_create(&tid, NULL, idleThread, iarg);
-  }
-#endif
-  
+  /* ------- Run Source Threads ------- */
+  pthread_barrier_init(&srcbarrier, NULL, Num_Sources); // set up barrier for all src to init
   for (int i=0; i<Num_Sources; i++) {
     sarg      = malloc(sizeof(struct SourceThreadArg));
     sarg->src = &(Sources[i]);
-#ifndef IDLE_HACK
-    sarg->cpu = atoi(argv[4+i]);
-#else
+    //sarg->cpu = atoi(argv[4+i]);
     sarg->cpu = cpuid++;
-#endif
+    sarg->barrier = &srcbarrier;
     pthread_create(&tid, NULL, sourceThread, sarg);
   }
   // wait for event processor to finish
   pthread_barrier_wait(&epbarrier);
 
-#ifdef IDLE_HACK
   flag = 1;
   pthread_barrier_wait(&idlebarrier);
-#endif
-  // latency logging
+  
+  /* ------- Latency Logging ------- */
   fprintf(stdout, "ID,Min,Max,Mean\n");
   for (int i=0; i<Num_Sources; i++) {
     source_t src = &Sources[i];
+    if(src->count == 0) { continue; } // never got a chance to finish event
     uint64_t mean = (src->totalns / src->count);
     fprintf(stdout, "%d,%"PRIu64",%"PRIu64",%"PRIu64"\n",
 	    src->id, src->minns, src->maxns, mean);
   }
+  
+  free(Sources);
   return 0;
 }
  

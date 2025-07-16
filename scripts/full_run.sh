@@ -12,6 +12,7 @@ for config in "${wfeyconfig[@]}"; do
 		for sources in "${sourceCPUs[@]}"; do
 		    echo "./scripts/run_allegro.sh $config $events $eventproc $sleeping $sources"
 		    taskset -c ${runnercpu} ./scripts/run_allegro.sh $config $events $eventproc $sleeping $sources
+		    sleep 5 # Should wait for the power numbers to go down before the next run
 		done
 	    done
 	done
