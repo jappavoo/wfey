@@ -8,8 +8,9 @@ set -m # enables job control
 
 SCRIPTDIR=$(dirname $0)
 WFEYCONFIG=$1
-
 PARAMETERS=$(echo "${*:2}")
+
+if [[ -z "$WFEYCONFIG" || -z "$PARAMETERS" ]]; then echo "USAGE($0): Input parameters as you would to wfey benchmark"; exit -1; fi
 
 ARGSTR=${PARAMETERS// /_}
 
