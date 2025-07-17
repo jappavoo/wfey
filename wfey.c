@@ -326,9 +326,9 @@ void * sourceThread(void *arg) {
     source_event_activate(this);
 #ifdef USE_DOORBELL
     doorbell_press(db);
-#endif
-#ifndef USE_MONITOR
+#ifndef USE_MONITOR // To use the monitor the doorbell must be on
     SEV();
+#endif
 #endif
   }
   free(sarg);

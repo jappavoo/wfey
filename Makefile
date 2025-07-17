@@ -34,7 +34,7 @@ wfe_db_nomon_wfey.o:
 wfe_db_mon_wfey: wfe_db_mon_wfey.o
 	${CC} ${CFLAGS} -o $@ $^ -lpthread
 wfe_db_mon_wfey.o:
-	${CC} ${CFLAGS} -c -DUSE_DOORBELL -USE_MONITOR -o $@ wfey.c 
+	${CC} ${CFLAGS} -c -DUSE_DOORBELL -DUSE_MONITOR -o $@ wfey.c 
 
 clean:
 	rm -f $(wildcard *.o *.d ${TARGETS})
