@@ -49,7 +49,7 @@ typedef struct timespec ts_t;
 int flag = 0;
 
 // Sources Random Delay
-#define DELAYADD (0.10)
+#define DELAYADD (10) // max percentage of delay to +- delay
 #define SECTORUN (30.0)
 #define TIMETORUN (SECTORUN*NSEC_IN_SECOND)
 
@@ -321,6 +321,13 @@ void * sourceThread(void *arg) {
   ep_t     ep                  = this->ep;
   doorbell_t *db = &(ep->eventSignal.db);
 #endif
+
+  // Add random delay to sleep time -- ?: should this delay be randomized every time? too much float math i think
+  double mod_perc = (double)(rand()%(DELAYADD + 1))/100.0; // rand()%((max+1)-min) + min
+  double delay_modifier = delay * mod_perc;
+  delay = ( (rand()%2) == 0 ) ? delay + delay_modifier : delay - delay_modifier;
+  
+  
   if (delay >= 1.0) {
     thedelay.tv_sec = (time_t)delay;
     delay = delay - thedelay.tv_sec;
@@ -407,6 +414,7 @@ main(int argc, char **argv)
   uint64_t event_rate_per_source = event_rate / Num_Sources;
   srcsleep                       = 1.0/event_rate_per_source;
   
+  srand((unsigned)time(NULL)); // uniquely setting rand val seed
   
   for (int i=0; i<Num_Sources; i++) {
     source_t src = &Sources[i];
