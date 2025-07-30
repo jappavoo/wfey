@@ -2,6 +2,7 @@
 
 # ----------- SetUp ------------ #
 
+source ./scripts/env.sh
 set -m # enables job control
 #set -x 
 #VERBOSE=1
@@ -11,12 +12,14 @@ WFEYCONFIG=$1
 PARAMETERS=$(echo "${*:2}")
 
 if [[ -z "$WFEYCONFIG" || -z "$PARAMETERS" ]]; then echo "USAGE($0): Input parameters as you would to wfey benchmark"; exit -1; fi
+# Should be checking parameter length ... 
+
 
 ARGSTR=${PARAMETERS// /_}
 
 LOGDATE=$(date +%Y-%m-%d-%H-%M-%S)
 
-LOGPATH="logs/$WFEYCONFIG/$ARGSTR/$LOGPATH"
+LOGPATH="logs/$LOGS/$WFEYCONFIG/$ARGSTR/"
 
 
 if [[ -n $VERBOSE ]]; then
@@ -49,7 +52,7 @@ powerPID=$!
 
 ./$@ 1> $LOGPATH/latency-${LOGDATE}.out 2> $LOGPATH/wfey-${LOGDATE}.out
 
-sleep 3 # Power numbers continue to go up a little after the wfey code is done
+sleep ${SLEEP_TO_FINISH} # Power numbers continue to go up a little after the wfey code is done
 
 kill -15 $powerPID
 
