@@ -31,7 +31,7 @@
 
 #endif
 
-#define USAGE "%s <max events> <event processor cpu> <time to sleep> <# of source cpu> [[source cpu]...]\n"
+#define USAGE "%s <events per sec> <event processor cpu> <# of source cpu>\n"
 //#define VERBOSE
 
 // Idling Macros
@@ -48,6 +48,11 @@ typedef struct timespec ts_t;
 // Exit Condition
 int flag = 0;
 
+// Sources Random Delay
+#define DELAYADD (10) // max percentage of delay to +- delay
+#define SECTORUN (30.0)
+#define TIMETORUN (SECTORUN*NSEC_IN_SECOND)
+
 static inline int
 ts_now(ts_t *now)
 {
@@ -59,10 +64,12 @@ ts_now(ts_t *now)
   return 1;
 }
 
+
+// Return the difference between the times in nanoseconds
 static inline uint64_t
 ts_diff(ts_t start, ts_t end)
 {
-  uint64_t diff=(end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec);
+  uint64_t diff=((end.tv_sec - start.tv_sec)*NSEC_IN_SECOND) + (end.tv_nsec - start.tv_nsec);
   return diff;
 } 
 
@@ -199,7 +206,6 @@ _Static_assert(sizeof(union EventSignal)==CACHE_LINE_SIZE,
 
 struct EventProcessor {
   union EventSignal eventSignal;
-  int maxevents;
   int id;
 };
 
@@ -233,7 +239,6 @@ epThread(void *arg)
   struct EPThreadArg * eparg = arg;
   ep_t     this              = eparg->ep;
   int      id                = this->id;
-  int      maxevents         = this->maxevents;
   uint64_t wakeups           = 0;
   uint64_t spurious          = 0;
   uint64_t events            = 0;
@@ -252,8 +257,15 @@ epThread(void *arg)
 
   // we are now ready to accept events
   pthread_barrier_wait(eparg->barrier);
+
+
+  ts_t start_time;
+  ts_t current_time;
+  uint64_t elapsed_time = 0.0;
   
-  while (events < maxevents) {
+  ts_now(&(start_time));
+  
+  while ( elapsed_time < TIMETORUN ) {
 #ifndef BUSY_POLL
     WFE();
 #ifdef USE_MONITOR
@@ -278,6 +290,9 @@ epThread(void *arg)
 	EP_handle_event(this, src);
       }
     }
+    
+    ts_now(&(current_time));
+    elapsed_time = ts_diff(start_time, current_time);
   }
   // all done
   fprintf(stderr, "%s:%p:%d wakeups=%ld spurious=%ld events=%ld\n",
@@ -296,9 +311,9 @@ void * sourceThread(void *arg) {
   struct SourceThreadArg *sarg = arg;
   source_t this                = sarg->src;
   double   delay               = this->sleep;
-  struct timespec thedelay     = { .tv_sec = 0, .tv_nsec = 0 };
-  struct timespec ndelay       = { .tv_sec = 0, .tv_nsec = 0 };
-  struct timespec nrem         = { .tv_sec = 0, .tv_nsec = 0 };
+  ts_t     thedelay            = { .tv_sec = 0, .tv_nsec = 0 };
+  ts_t     ndelay              = { .tv_sec = 0, .tv_nsec = 0 };
+  ts_t     nrem                = { .tv_sec = 0, .tv_nsec = 0 };
   int      id                  = this->id;
   char     name[80];
 
@@ -306,6 +321,13 @@ void * sourceThread(void *arg) {
   ep_t     ep                  = this->ep;
   doorbell_t *db = &(ep->eventSignal.db);
 #endif
+
+  // Add random delay to sleep time -- ?: should this delay be randomized every time? too much float math i think
+  double mod_perc = (double)(rand()%(DELAYADD + 1))/100.0; // rand()%((max+1)-min) + min
+  double delay_modifier = delay * mod_perc;
+  delay = ( (rand()%2) == 0 ) ? delay + delay_modifier : delay - delay_modifier;
+  
+  
   if (delay >= 1.0) {
     thedelay.tv_sec = (time_t)delay;
     delay = delay - thedelay.tv_sec;
@@ -372,7 +394,7 @@ main(int argc, char **argv)
   double                  srcsleep;
   pthread_barrier_t       srcbarrier;
   
-  if (argc < 5) {
+  if (argc < 4) {
     fprintf(stderr, USAGE, argv[0]);
     return(-1);
   }
@@ -380,13 +402,20 @@ main(int argc, char **argv)
   pinCpu(RUNNER_CPU, "main thread");
   
   // create sources but don't start them
-  //Num_Sources = argc - 4;
-  Num_Sources = atoi(argv[4]);
+  Num_Sources = atoi(argv[3]);
 
   /* ------- Init Sources ------- */
   Sources     = malloc(sizeof(struct Source)*Num_Sources);
-  // create sources
-  srcsleep    = strtod(argv[3],NULL);
+
+  // Rate of Events per source is NumEventsPerSec == argv[1]
+  // divided by the number of sources to get per event rate
+  // srcsleep    = strtod(argv[3],NULL);
+  uint64_t event_rate            = atoi(argv[1]);
+  uint64_t event_rate_per_source = event_rate / Num_Sources;
+  srcsleep                       = 1.0/event_rate_per_source;
+  
+  srand((unsigned)time(NULL)); // uniquely setting rand val seed
+  
   for (int i=0; i<Num_Sources; i++) {
     source_t src = &Sources[i];
     src->ep      = &ep;
@@ -423,8 +452,6 @@ main(int argc, char **argv)
   /* ------- Init and Run Event Processor ------- */
   // initalize event processor (only one right now)
   ep.id        = id; id++;
-  ep.maxevents = atoi(argv[1]);
-  if (ep.maxevents<=0) ep.maxevents = 1; 
   // eventSignal initalization will be handled by the EP thread
 
   // intialize event processing thread
