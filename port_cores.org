@@ -1,0 +1,20 @@
+* ToDo List
+** DONE Find the number of sockets & Num sockets per core
+** DONE Have macro that you can switch on/off based on numa node splitting
+** DONE Change all macros hardcoded for numa nodes
+** DONE Make sure scripts work with new updates
+** TODO Allow for multiple event processors
+*** This should be done in a separate branch!!
+** DONE Error checking number of cores being used
+- This can be done by looping back to the start but I will do that when multiple threads should run on same core
+- In the meantime -- error out saying we are overloading the cpus
+** DONE FIX 'num_event_cpus'
+** TODO Possible wiki needs to be added to say how everything works
+
+* Ideas
+** Meta scripts?
+- Should the scripts that run the experiment and the control thread of the benchmark still be separted to another socket?
+  - I don't believe this should effect latency in any way -- should just control the noise
+** Ids?
+- Ids are currently not correlated to the core the event processors/generator runs on
+- Idle threads do not have id's  -- not sure if this is something that we wish to have
