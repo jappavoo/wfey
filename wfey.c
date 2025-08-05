@@ -149,23 +149,6 @@ _Static_assert(sizeof(union Event)==CACHE_LINE_SIZE,
 	       "union eventdesc bad size");
 
 typedef struct Source * source_t;
-void source_event_reset(source_t this) {
-  __atomic_store_n(&(this->event.state), SRC_EVENT_RESET,
-		   __ATOMIC_SEQ_CST);
-  // FIXME: add end of event time here
-  ts_now(&(this->end_ts));
-  uint64_t ns = ts_diff(this->start_ts, this->end_ts);
-  this->totalns += ns;
-  this->count++;
-
-  if ( ns < this->minns ) { this->minns = ns; }
-  if ( ns > this->maxns ) { this->maxns = ns; }
-#ifdef VERBOSE
-  fprintf(stderr, "%d: Diff=%ld, TotalNS=%ld, Count=%ld, Min=%ld, Max=%ld\n",
-	  this->id, ns, this->totalns, this->count, this->minns, this->maxns);
-#endif
-}
-
 void source_event_activate(source_t this)  {
   // FIXME: add start of event time here
   ts_now(&(this->start_ts));
@@ -177,6 +160,37 @@ bool source_event_isActive(source_t this)   {
   return __atomic_load_n(&(this->event.state),
 			 __ATOMIC_SEQ_CST) == SRC_EVENT_ACTIVE;
 }
+
+void source_event_reset(source_t this) {
+  __atomic_store_n(&(this->event.state), SRC_EVENT_RESET,
+		   __ATOMIC_SEQ_CST);
+  // TODO there should probably~ be a lock involved here :p
+  // min might be wrong! or this process can be really fast
+  
+  if (source_event_isActive(this)) { // Give up if this is true
+    return;
+  }
+  
+  ts_now(&(this->end_ts));
+
+  uint64_t ns = ts_diff(this->start_ts, this->end_ts);
+
+  if ( (int64_t)ns <= 0 ) { // Give up again -- shenanigans occured
+    return;
+  }
+
+  this->totalns += ns;
+  this->count++;
+
+  if ( ns < this->minns ) { this->minns = ns; }
+  if ( ns > this->maxns ) { this->maxns = ns; }
+#ifdef VERBOSE
+  fprintf(stderr, "%d: Diff=%ld, TotalNS=%ld, Count=%ld, Min=%lu, Max=%lu\n",
+	  this->id, ns, this->totalns, this->count, this->minns, this->maxns);
+#endif
+}
+
+
 int            Num_Sources = 0;
 struct Source *Sources     = NULL;
 
