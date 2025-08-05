@@ -9,31 +9,31 @@ all: ${TARGETS}
 ###
 busypoll_nodb_wfey: busypoll_nodb_wfey.o
 	${CC} ${CFLAGS} -o $@ $^ -lpthread
-busypoll_nodb_wfey.o:
+busypoll_nodb_wfey.o: wfey.c
 	${CC} ${CFLAGS} -c -DBUSY_POLL -o $@ wfey.c 
 
 ###
 busypoll_db_wfey: busypoll_db_wfey.o
 	${CC} ${CFLAGS} -o $@ $^ -lpthread
-busypoll_db_wfey.o:
+busypoll_db_wfey.o: wfey.c
 	${CC} ${CFLAGS} -c -DUSE_DOORBELL -DBUSY_POLL -o $@ wfey.c 
 
 ### use wfe but no doorbell to help filter suprious
 wfe_nodb_wfey: wfe_nodb_wfey.o
 	${CC} ${CFLAGS} -o $@ $^ -lpthread
-wfe_nodb_wfey.o:
+wfe_nodb_wfey.o: wfey.c
 	${CC} ${CFLAGS} -c -o $@ wfey.c
 
 ### use wfe with doorbells but no monitor 
 wfe_db_nomon_wfey: wfe_db_nomon_wfey.o
 	${CC} ${CFLAGS} -o $@ $^ -lpthread
-wfe_db_nomon_wfey.o:
+wfe_db_nomon_wfey.o: wfey.c
 	${CC} ${CFLAGS} -c -DUSE_DOORBELL -o $@ wfey.c
 
 ### use wfe with doorbells and monitors
 wfe_db_mon_wfey: wfe_db_mon_wfey.o
 	${CC} ${CFLAGS} -o $@ $^ -lpthread
-wfe_db_mon_wfey.o:
+wfe_db_mon_wfey.o: wfey.c
 	${CC} ${CFLAGS} -c -DUSE_DOORBELL -DUSE_MONITOR -o $@ wfey.c 
 
 clean:
