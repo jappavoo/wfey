@@ -17,6 +17,10 @@
 //#define USE_DOORBELL
 //#define USE_MONITOR
 
+//#define SOCKETSPLIT
+
+//#define VERBOSE
+
 #define CLOCK_SOURCE CLOCK_MONOTONIC
 #define NSEC_IN_SECOND (1000000000)
 #define NULL_WORK_COUNT (10000)
@@ -32,13 +36,11 @@
 #endif
 
 #define USAGE "%s <events per sec> <event processor cpu> <# of source cpu>\n"
-//#define VERBOSE
 
 // Idling Macros
-#define CPU_PER_NODE 80
-#define RUNNER_CPU CPU_PER_NODE // the main function and scripts are running on first core of node2
 #define EVENT_CPU_ID 0
 #define NUM_EVENT_CPUS 1 // currently locked in at 1, but should be dynamic in the future
+#define META_THREAD 1 // just for clarity
 
 pthread_barrier_t idlebarrier;
 
@@ -380,6 +382,23 @@ void * idleThread(void *arg) {
   return NULL;
 }
 
+static inline void getCPUInfo( uint64_t  *cps, uint64_t *socks ) {
+  FILE *cps_pipe, *socks_pipe;
+  char temp[256];
+
+  cps_pipe = popen("./scripts/find_cores_per_socket.sh", "r");
+  socks_pipe = popen("./scripts/find_num_sockets.sh", "r");
+
+  if ( (fgets(temp, 255, cps_pipe)) == NULL ) {
+    err(1, "ERROR reading cores per socket\n");
+  }
+  *cps = atoi(temp);
+
+  if ( (fgets(temp, 255, socks_pipe)) == NULL ) {
+    err(1, "ERROR reading number of sockets\n");
+  }
+  *socks = atoi(temp);
+}
 
 int
 main(int argc, char **argv)
@@ -399,12 +418,22 @@ main(int argc, char **argv)
     return(-1);
   }
 
-  pinCpu(RUNNER_CPU, "main thread");
-  
-  // create sources but don't start them
-  Num_Sources = atoi(argv[3]);
+  getCPUInfo(&cores_per_socket, &sockets);
+  total_cpu = cores_per_socket * sockets;
+
+  /* ------- Init Event Processor ------- */
+  // initalize event processor (only one right now)
+  ep.id        = id; id++;
+  // eventSignal initalization will be handled by the EP thread
+  // intialize event processing thread
+  pthread_barrier_init(&epbarrier, NULL, 2);
+  eparg.ep      = &ep;
+  eparg.barrier = &epbarrier;
+  eparg.cpu     = EVENT_CPU_ID; //atoi(argv[2]);
+
 
   /* ------- Init Sources ------- */
+  Num_Sources = atoi(argv[3]);   // create sources but don't start them
   Sources     = malloc(sizeof(struct Source)*Num_Sources);
 
   // Rate of Events per source is NumEventsPerSec == argv[1]
