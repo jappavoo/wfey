@@ -480,9 +480,20 @@ main(int argc, char **argv)
   // first node should have only event handlers on it, rest should be idle
   // second node will have the sources and one node that will run main + scripts
   if ( sockets < 2 ) {
-    err( 1, "There is not another socket to split work across\n Turn off SOCKETSPLIT func\n");
+    fprintf( stderr, "There is not another socket to split work across\nTurn off SOCKETSPLIT functionality\n");
+    exit(1);
   } else if ( sockets > 2 ) {
     printf( "The case where there are more than 2 sockets has not been thought of in depth -- proceed with caution\n");
+  }
+
+  /* Error Checking */
+  if ( NUM_EVENT_CPUS > cores_per_socket ) {
+    fprintf( stderr, "There are too many event processors to fit on one socket -- Try <%ld\n", cores_per_socket);
+    exit(1);
+  }
+  if ( Num_Sources > (cores_per_socket-META_THREAD) ) {
+    fprintf( stderr, "There are too many source threads to fit on one socket -- Try <%ld\n", (cores_per_socket-1));
+    exit(1);
   }
 
   // Starting point -- What cores should the source threads run on
@@ -491,16 +502,16 @@ main(int argc, char **argv)
   source_end = cpuid + Num_Sources;
   // Where Main and Runners should run
   runner_cpu = cores_per_socket; // first core on 2nd socket
-  
-  pthread_barrier_init(&idlebarrier, NULL, num_idle);
+
+  if (num_idle != 0) { pthread_barrier_init(&idlebarrier, NULL, num_idle); }
 
   printf("Split -- 2 Socket: num_idle:%ld, cpuid:%ld, source_end:%ld\n",
 	 num_idle, cpuid, source_end);
   
   /* Running Idle Threads on Socket 1 */
   // All but the event processors on the first node
+  printf("Split -- 2 sock: creating idle threads(sock 1):%d -- %ld\n", NUM_EVENT_CPUS, cores_per_socket);
   for (int i = NUM_EVENT_CPUS; i < cores_per_socket; i++){
-    printf("Split -- 2 sock: creating idle thread(sock 1):%ld\n", i);
     iarg = malloc(sizeof(struct IdleThreadArg));
     iarg->cpu = i;
     iarg->barrier = &idlebarrier;
@@ -508,8 +519,8 @@ main(int argc, char **argv)
   }
   /* Running Idle Threads on Socket 2 */
   // start at sock2 & after all other after sources + runner
+  printf("Split -- 2 sock: creating idle threads(sock 2):%ld -- %ld\n", source_end, total_cpu);
   for (int i = source_end; i < total_cpu; i++){
-    printf("Split -- 2 sock: creating idle thread(sock 2):%ld\n", i);
     iarg = malloc(sizeof(struct IdleThreadArg));
     iarg->cpu = i;
     iarg->barrier = &idlebarrier;
@@ -518,7 +529,7 @@ main(int argc, char **argv)
   
 #else
   // All the events and the sources occur on a single core (*ish)
-  
+
   if ( sockets < 2 ) { // There is only one socket so everything has to do work here
     /*
       -------------------  
@@ -527,7 +538,13 @@ main(int argc, char **argv)
       |  Idle Threads   |
       |  Runner/Main    |
       -------------------  
-   */
+    */
+
+    /* Error Checking */
+    if ( (NUM_EVENT_CPUS + Num_Sources) > (cores_per_socket - META_THREAD) ) {
+      fprintf( stderr, "There are too many event processors & source threads to fit on one socket together -- Try a total of <%ld\n", cores_per_socket-META_THREAD);
+      exit(1);
+    }
     
     cpuid = NUM_EVENT_CPUS;
     source_end = cpuid + Num_Sources;
@@ -536,13 +553,10 @@ main(int argc, char **argv)
     printf("No Split -- 1 Socket: num_idle:%ld, cpuid:%ld, source_end:%ld\n",
 	   num_idle, cpuid, source_end);
 
-    if (source_end < (total_cpu-META_THREAD)) { // creating idle threads
-      printf("No split -- 1 Socket: No need for idle threads\n");
-      pthread_barrier_init(&idlebarrier, NULL, num_idle);
-    }
+    if (num_idle != 0) { pthread_barrier_init(&idlebarrier, NULL, num_idle); }
 
+    printf("No split -- 1 sock: creating idle threads:%ld -- %ld\n", source_end, (total_cpu - META_THREAD));
     for (int i = source_end; i < (total_cpu-META_THREAD); i++){ 
-      printf("No split -- 1 sock: creating idle thread:%d\n", i);
       iarg = malloc(sizeof(struct IdleThreadArg));
       iarg->cpu = i;
       iarg->barrier = &idlebarrier;
@@ -557,6 +571,16 @@ main(int argc, char **argv)
       |  Idle Threads | -----------------
       ----------------  
    */
+
+    /* Error Checking */
+    if ( (NUM_EVENT_CPUS + Num_Sources) > cores_per_socket ) {
+      fprintf( stderr, "There are too many event processors & source threads to fit on one socket -- Try a total of <%ld\n", cores_per_socket);
+      exit(1);
+    }
+    if ( META_THREAD > cores_per_socket ) {
+      fprintf( stderr, "There are too many runner threads to fit on one socket (HOW DID THIS HAPPEN) -- Try <%ld\n", cores_per_socket);
+      exit(1);
+    }
     
     // Starting point -- What cores should the source threads run on
     cpuid = NUM_EVENT_CPUS;
@@ -566,18 +590,18 @@ main(int argc, char **argv)
     printf("No Split -- 2 Socket: num_idle:%ld, cpuid:%ld, source_end:%ld\n",
 	   num_idle, cpuid, source_end);
 
-    pthread_barrier_init(&idlebarrier, NULL, num_idle);
-    
+    if (num_idle != 0) { pthread_barrier_init(&idlebarrier, NULL, num_idle); }
+
+    printf("No split -- 2 sock: creating idle threads(sock 1):%ld -- %ld\n", source_end, cores_per_socket);
     for (int i = source_end; i < cores_per_socket; i++){ // All but the event processors on the first node
-      printf("No split -- 2 sock: creating idle thread (sock 1):%d\n", i);
       iarg = malloc(sizeof(struct IdleThreadArg));
       iarg->cpu = i;
       iarg->barrier = &idlebarrier;
       pthread_create(&tid, NULL, idleThread, iarg);
     }
     /* Running Idle Threads on Socket 2 */
+    printf("No split -- 2 sock: creating idle threads(sock 2):%ld -- %ld\n", (cores_per_socket+META_THREAD), total_cpu);
     for (int i = (cores_per_socket + META_THREAD); i < total_cpu; i++){
-      printf("No split -- 2 sock: creating idle thread(sock 2):%d\n", i);
       iarg = malloc(sizeof(struct IdleThreadArg));
       iarg->cpu = i;
       iarg->barrier = &idlebarrier;
