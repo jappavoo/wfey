@@ -17,6 +17,10 @@
 //#define USE_DOORBELL
 //#define USE_MONITOR
 
+//#define SOCKETSPLIT
+
+//#define VERBOSE
+
 #define CLOCK_SOURCE CLOCK_MONOTONIC
 #define NSEC_IN_SECOND (1000000000)
 #define NULL_WORK_COUNT (10000)
@@ -32,13 +36,11 @@
 #endif
 
 #define USAGE "%s <events per sec> <event processor cpu> <# of source cpu>\n"
-//#define VERBOSE
 
 // Idling Macros
-#define CPU_PER_NODE 80
-#define RUNNER_CPU CPU_PER_NODE // the main function and scripts are running on first core of node2
 #define EVENT_CPU_ID 0
 #define NUM_EVENT_CPUS 1 // currently locked in at 1, but should be dynamic in the future
+#define META_THREAD 1 // just for clarity
 
 pthread_barrier_t idlebarrier;
 
@@ -147,23 +149,6 @@ _Static_assert(sizeof(union Event)==CACHE_LINE_SIZE,
 	       "union eventdesc bad size");
 
 typedef struct Source * source_t;
-void source_event_reset(source_t this) {
-  __atomic_store_n(&(this->event.state), SRC_EVENT_RESET,
-		   __ATOMIC_SEQ_CST);
-  // FIXME: add end of event time here
-  ts_now(&(this->end_ts));
-  uint64_t ns = ts_diff(this->start_ts, this->end_ts);
-  this->totalns += ns;
-  this->count++;
-
-  if ( ns < this->minns ) { this->minns = ns; }
-  if ( ns > this->maxns ) { this->maxns = ns; }
-#ifdef VERBOSE
-  fprintf(stderr, "%d: Diff=%ld, TotalNS=%ld, Count=%ld, Min=%ld, Max=%ld\n",
-	  this->id, ns, this->totalns, this->count, this->minns, this->maxns);
-#endif
-}
-
 void source_event_activate(source_t this)  {
   // FIXME: add start of event time here
   ts_now(&(this->start_ts));
@@ -175,6 +160,37 @@ bool source_event_isActive(source_t this)   {
   return __atomic_load_n(&(this->event.state),
 			 __ATOMIC_SEQ_CST) == SRC_EVENT_ACTIVE;
 }
+
+void source_event_reset(source_t this) {
+  __atomic_store_n(&(this->event.state), SRC_EVENT_RESET,
+		   __ATOMIC_SEQ_CST);
+  // TODO there should probably~ be a lock involved here :p
+  // min might be wrong! or this process can be really fast
+  
+  if (source_event_isActive(this)) { // Give up if this is true
+    return;
+  }
+  
+  ts_now(&(this->end_ts));
+
+  uint64_t ns = ts_diff(this->start_ts, this->end_ts);
+
+  if ( (int64_t)ns <= 0 ) { // Give up again -- shenanigans occured
+    return;
+  }
+
+  this->totalns += ns;
+  this->count++;
+
+  if ( ns < this->minns ) { this->minns = ns; }
+  if ( ns > this->maxns ) { this->maxns = ns; }
+#ifdef VERBOSE
+  fprintf(stderr, "%d: Diff=%ld, TotalNS=%ld, Count=%ld, Min=%lu, Max=%lu\n",
+	  this->id, ns, this->totalns, this->count, this->minns, this->maxns);
+#endif
+}
+
+
 int            Num_Sources = 0;
 struct Source *Sources     = NULL;
 
@@ -380,6 +396,23 @@ void * idleThread(void *arg) {
   return NULL;
 }
 
+static inline void getCPUInfo( uint64_t  *cps, uint64_t *socks ) {
+  FILE *cps_pipe, *socks_pipe;
+  char temp[256];
+
+  cps_pipe = popen("./scripts/find_cores_per_socket.sh", "r");
+  socks_pipe = popen("./scripts/find_num_sockets.sh", "r");
+
+  if ( (fgets(temp, 255, cps_pipe)) == NULL ) {
+    err(1, "ERROR reading cores per socket\n");
+  }
+  *cps = atoi(temp);
+
+  if ( (fgets(temp, 255, socks_pipe)) == NULL ) {
+    err(1, "ERROR reading number of sockets\n");
+  }
+  *socks = atoi(temp);
+}
 
 int
 main(int argc, char **argv)
@@ -393,18 +426,31 @@ main(int argc, char **argv)
   struct SourceThreadArg *sarg;
   double                  srcsleep;
   pthread_barrier_t       srcbarrier;
+  uint64_t cores_per_socket, sockets;
+  uint64_t source_end;
+  uint64_t runner_cpu, total_cpu;
   
   if (argc < 4) {
     fprintf(stderr, USAGE, argv[0]);
     return(-1);
   }
 
-  pinCpu(RUNNER_CPU, "main thread");
-  
-  // create sources but don't start them
-  Num_Sources = atoi(argv[3]);
+  getCPUInfo(&cores_per_socket, &sockets);
+  total_cpu = cores_per_socket * sockets;
+
+  /* ------- Init Event Processor ------- */
+  // initalize event processor (only one right now)
+  ep.id        = id; id++;
+  // eventSignal initalization will be handled by the EP thread
+  // intialize event processing thread
+  pthread_barrier_init(&epbarrier, NULL, 2);
+  eparg.ep      = &ep;
+  eparg.barrier = &epbarrier;
+  eparg.cpu     = EVENT_CPU_ID; //atoi(argv[2]);
+
 
   /* ------- Init Sources ------- */
+  Num_Sources = atoi(argv[3]);   // create sources but don't start them
   Sources     = malloc(sizeof(struct Source)*Num_Sources);
 
   // Rate of Events per source is NumEventsPerSec == argv[1]
@@ -428,37 +474,146 @@ main(int argc, char **argv)
     src->count   = 0;
   }
 
+
   /* ------- Init and Start Idle Cores ------- */
   struct IdleThreadArg *iarg;
+  uint64_t num_idle, cpuid;
+
+  num_idle = total_cpu - ( NUM_EVENT_CPUS + Num_Sources + META_THREAD );
+  
+#ifdef SOCKETSPLIT
+  /* This splits the event processor(s) onto 1 socket and sources into another */
+  /*
+      ----------------   ----------------
+      |  Event Proc   | |  Runner+Main  |
+      |  Idle Threads | |  Sources      |
+      ----------------  |  Idle Threads |
+                        -----------------
+   */
+  
   // first node should have only event handlers on it, rest should be idle
   // second node will have the sources and one node that will run main + scripts
-  int num_idle = (CPU_PER_NODE-NUM_EVENT_CPUS) + (CPU_PER_NODE-Num_Sources-1);
-  int cpuid = CPU_PER_NODE+1; // starting at numa 2 + runner thread -- for sources id
+  if ( sockets < 2 ) {
+    fprintf( stderr, "There is not another socket to split work across\nTurn off SOCKETSPLIT functionality\n");
+    exit(1);
+  } else if ( sockets > 2 ) {
+    printf( "The case where there are more than 2 sockets has not been thought of in depth -- proceed with caution\n");
+  }
 
-  pthread_barrier_init(&idlebarrier, NULL, num_idle);
-  for (int i = 1; i < 80; i++){ // all but the event cpu on the first node
+  /* Error Checking */
+  if ( NUM_EVENT_CPUS > cores_per_socket ) {
+    fprintf( stderr, "There are too many event processors to fit on one socket -- Try <%ld\n", cores_per_socket);
+    exit(1);
+  }
+  if ( Num_Sources > (cores_per_socket-META_THREAD) ) {
+    fprintf( stderr, "There are too many source threads to fit on one socket -- Try <%ld\n", (cores_per_socket-1));
+    exit(1);
+  }
+
+  // Starting point -- What cores should the source threads run on
+  cpuid = cores_per_socket + META_THREAD;
+  // Ending point -- Where the idle threads should start
+  source_end = cpuid + Num_Sources;
+  // Where Main and Runners should run
+  runner_cpu = cores_per_socket; // first core on 2nd socket
+
+  if (num_idle != 0) { pthread_barrier_init(&idlebarrier, NULL, num_idle); }
+  
+  /* Running Idle Threads on Socket 1 */
+  // All but the event processors on the first node
+  for (int i = NUM_EVENT_CPUS; i < cores_per_socket; i++){
     iarg = malloc(sizeof(struct IdleThreadArg));
     iarg->cpu = i;
     iarg->barrier = &idlebarrier;
     pthread_create(&tid, NULL, idleThread, iarg);
   }
-  for (int i = CPU_PER_NODE+Num_Sources+1; i < 160; i++){ // all other after sources + runner
+  /* Running Idle Threads on Socket 2 */
+  // start at sock2 & after all other after sources + runner
+  for (int i = source_end; i < total_cpu; i++){
     iarg = malloc(sizeof(struct IdleThreadArg));
     iarg->cpu = i;
     iarg->barrier = &idlebarrier;
     pthread_create(&tid, NULL, idleThread, iarg);
   }
+  
+#else
+  // All the events and the sources occur on a single core (*ish)
 
-  /* ------- Init and Run Event Processor ------- */
-  // initalize event processor (only one right now)
-  ep.id        = id; id++;
-  // eventSignal initalization will be handled by the EP thread
+  if ( sockets < 2 ) { // There is only one socket so everything has to do work here
+    /*
+      -------------------  
+      |  Event Proc     |
+      |  Source Threads |
+      |  Idle Threads   |
+      |  Runner/Main    |
+      -------------------  
+    */
 
-  // intialize event processing thread
-  pthread_barrier_init(&epbarrier, NULL, 2);
-  eparg.ep      = &ep;
-  eparg.barrier = &epbarrier;
-  eparg.cpu     = EVENT_CPU_ID; //atoi(argv[2]);
+    /* Error Checking */
+    if ( (NUM_EVENT_CPUS + Num_Sources) > (cores_per_socket - META_THREAD) ) {
+      fprintf( stderr, "There are too many event processors & source threads to fit on one socket together -- Try a total of <%ld\n", cores_per_socket-META_THREAD);
+      exit(1);
+    }
+    
+    cpuid = NUM_EVENT_CPUS;
+    source_end = cpuid + Num_Sources;
+    runner_cpu = cores_per_socket - 1; // last core on socket
+
+    if (num_idle != 0) { pthread_barrier_init(&idlebarrier, NULL, num_idle); }
+    
+    for (int i = source_end; i < (total_cpu-META_THREAD); i++){ 
+      iarg = malloc(sizeof(struct IdleThreadArg));
+      iarg->cpu = i;
+      iarg->barrier = &idlebarrier;
+      pthread_create(&tid, NULL, idleThread, iarg);
+    }
+    
+  } else { // Can put runner scripts on different socket
+      /*
+      ----------------   ----------------
+      |  Event Proc   | |  Runner+Main  |
+      |  Sources      | |  Idle Threads |
+      |  Idle Threads | -----------------
+      ----------------  
+   */
+
+    /* Error Checking */
+    if ( (NUM_EVENT_CPUS + Num_Sources) > cores_per_socket ) {
+      fprintf( stderr, "There are too many event processors & source threads to fit on one socket -- Try a total of <%ld\n", cores_per_socket);
+      exit(1);
+    }
+    if ( META_THREAD > cores_per_socket ) {
+      fprintf( stderr, "There are too many runner threads to fit on one socket (HOW DID THIS HAPPEN) -- Try <%ld\n", cores_per_socket);
+      exit(1);
+    }
+    
+    cpuid = NUM_EVENT_CPUS;
+    source_end = cpuid + Num_Sources;
+    runner_cpu = cores_per_socket; // first core on 2nd socket
+    
+    
+    if (num_idle != 0) { pthread_barrier_init(&idlebarrier, NULL, num_idle); }
+
+    for (int i = source_end; i < cores_per_socket; i++){ // All but the event processors on the first node
+      iarg = malloc(sizeof(struct IdleThreadArg));
+      iarg->cpu = i;
+      iarg->barrier = &idlebarrier;
+      pthread_create(&tid, NULL, idleThread, iarg);
+    }
+    /* Running Idle Threads on Socket 2 */
+    for (int i = (cores_per_socket + META_THREAD); i < total_cpu; i++){
+      iarg = malloc(sizeof(struct IdleThreadArg));
+      iarg->cpu = i;
+      iarg->barrier = &idlebarrier;
+      pthread_create(&tid, NULL, idleThread, iarg);
+    }
+  }
+#endif
+  
+  pinCpu(runner_cpu, "main thread"); 
+
+
+  /* ------- Run Event Processor ------- */
   pthread_create(&tid, NULL, epThread, &eparg);
 
   // wait for event processor to be ready

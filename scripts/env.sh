@@ -1,4 +1,6 @@
 LOGS="logs"
+ENERGYSCRIPT=$(dirname "$0")/allegro_hwmon.sh
+
 declare -i SLEEP_TO_FINISH=3
 declare -i SLEEP_TO_RESET=5
 declare -i runnercpu=80
