@@ -1,0 +1,47 @@
+* Links Found
+[[https://icl.utk.edu/projectsdev/papi/docs/index.html][PAPI Docs]]
+[[https://github.com/icl-utk-edu/papi/wiki/PAPI-LL][Low Level Intro]]
+
+* Steps to Take
+** MEGA IMPORTANT -- Perf Logging
+No perf logging works without having a perf event paranoia level of at least less than 2
+This included the perf command line option -- if you want performance logging I believe
+you just have to bite the bullet
+
+*** Here are the steps to take:
+[[https://www.kernel.org/doc/html/latest/admin-guide/perf-security.html#privileged-perf-users-groups][Add Perf Group]] -- /usr/bin/perf is sometimes a wrapper script, have to do this to the actual executable (trial by fire)
+- ~groupadd perf_users~
+- ~chgrp perf_users perf~
+- ~chmod o-rwx perf~
+- ~setcap "cap_perfmon,cap_sys_ptrace,cap_syslog=ep" perf~
+  - ~CAP_PERFMON~
+    Employs perf-mon mechanisms like perf_event_open
+  - ~CAP_SYS_PTRACE~
+    Can use ptrace...
+  - ~CAP_SYSLOG~
+    Perform priviledged syslog operations
+  - [[https://man7.org/linux/man-pages/man7/capabilities.7.html][Man Page for these capabilities]]
+  - Personally had to use ~CAP_SYS_ADMIN~ instead of ~CAP_PERFMON~
+    - This gives extra privledges and is not the recommended way BUT! the good way didn't work for me so...
+    - [[https://unix.stackexchange.com/questions/14227/do-i-need-root-admin-permissions-to-run-userspace-perf-tool-perf-events-ar][Figured out why]] -- I was testing my ability to use perf with ~perf stat~ this is more permissions than i was giving myself with ~PERMOM~
+- ~usermod -a -G perf_users userName~
+*** Here are the actual steps to take b/c the above doesn't fucking work for PAPI
+- ~sudo sh -c "echo 2 > /proc/sys/kernel/perf_event_paranoid"~ (Should probably bring that back to 4 when Im done)
+- ~$(HOME)/wfey/papi/INSTALL.txt~ has baseline instructions
+- [[https://github.com/icl-utk-edu/papi/wiki/Downloading-and-Installing-PAPI][Has rest of instructions to get coding with it]]
+  - ~cd papi/src; ./configure --prefix=$PWD/install; make && make install~
+  - ~cd papi/src/install/bin; ./papi_avail~
+  - ~export PAPI_DIR=<...>/papi/src/install~
+  - ~export PATH=${PAPI_DIR}/bin:$PATH~
+  - ~export LD_LIBRARY_PATH=${PAPI_DIR}/lib:$LD_LIBRARY_PATH~
+    
+** How to use Papi
+- Init, Create EventSet, Start, Read, Stop, Reset
+
+
+* ToDo List
+** TODO Set up machine to be able to get perf values
+** TODO Get PAPI Working 
+** TODO Include CPU & Instruction cycles in BM
+** TODO Add output logging mechanism 
+** TODO Add basic graph to notebooks
