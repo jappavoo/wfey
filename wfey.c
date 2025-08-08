@@ -11,6 +11,8 @@
 #include <assert.h>
 #include <time.h>
 
+#include <papi.h>
+
 #define NYI { fprintf(stderr, "%s: %d: NYI\n", __func__, __LINE__); assert(0); }
 
 //#define BUSY_POLL
@@ -52,8 +54,13 @@ int flag = 0;
 
 // Sources Random Delay
 #define DELAYADD (10) // max percentage of delay to +- delay
-#define SECTORUN (30.0)
+#define SECTORUN (5.0) //(30.0)
 #define TIMETORUN (SECTORUN*NSEC_IN_SECOND)
+
+// Papi
+#define TOT_EVENTS 2
+//int EventSet = PAPI_NULL;
+//long_long values[TOT_EVENTS];
 
 static inline int
 ts_now(ts_t *now)
@@ -133,16 +140,25 @@ union Event {
 
 typedef struct EventProcessor * ep_t;
 
-struct Source {
-  ep_t ep;
-  double sleep;
-  int id;
+struct SourceData {
   ts_t start_ts;
   ts_t end_ts;
   uint64_t totalns;
   uint64_t minns;
   uint64_t maxns;
+  long long values[TOT_EVENTS];
+  int EventSet;
+  uint64_t totalCYC;
+  uint64_t totalINS;
   uint64_t count;
+};
+typedef struct SourceData data_t;
+  
+struct Source {
+  ep_t ep;
+  double sleep;
+  int id;
+  data_t data;
   union Event event;
 };
 _Static_assert(sizeof(union Event)==CACHE_LINE_SIZE,
@@ -151,7 +167,7 @@ _Static_assert(sizeof(union Event)==CACHE_LINE_SIZE,
 typedef struct Source * source_t;
 void source_event_activate(source_t this)  {
   // FIXME: add start of event time here
-  ts_now(&(this->start_ts));
+  ts_now(&(this->data.start_ts));
   __atomic_store_n(&(this->event.state), SRC_EVENT_ACTIVE,
 		   __ATOMIC_SEQ_CST);
 }
@@ -169,24 +185,47 @@ void source_event_reset(source_t this) {
   
   if (source_event_isActive(this)) { // Give up if this is true
     return;
+  } 
+  
+  data_t data = this->data;
+  if ( data.EventSet == PAPI_NULL ) { //PAPI not initialized yet
+    fprintf(stderr, "Notice -- id:%d eventset not init\n", this->id);
+    return;
   }
   
-  ts_now(&(this->end_ts));
+  ts_now(&(data.end_ts));
 
-  uint64_t ns = ts_diff(this->start_ts, this->end_ts);
+  if ( PAPI_read( data.EventSet, data.values ) != PAPI_OK ) {
+    fprintf(stderr, "Error reading event counting\n");
+    exit(1);
+  }
+
+  uint64_t ns = ts_diff(data.start_ts, data.end_ts);
 
   if ( (int64_t)ns <= 0 ) { // Give up again -- shenanigans occured
     return;
   }
+  
+  data.totalns  += ns;
+  data.totalCYC += data.values[0];
+  data.totalINS += data.values[1];
+  data.count++;
 
-  this->totalns += ns;
-  this->count++;
+  printf("Papi check : total cycles:%ld, total instructions:%ld\n", data.totalCYC, data.totalINS);
 
-  if ( ns < this->minns ) { this->minns = ns; }
-  if ( ns > this->maxns ) { this->maxns = ns; }
+  if ( ns < data.minns ) { data.minns = ns; }
+  if ( ns > data.maxns ) { data.maxns = ns; }
+
+  if ( PAPI_reset( data.EventSet ) != PAPI_OK ) {
+    fprintf(stderr, "Error reseting event counter\n");
+    exit(1);
+  }
+
 #ifdef VERBOSE
-  fprintf(stderr, "%d: Diff=%ld, TotalNS=%ld, Count=%ld, Min=%lu, Max=%lu\n",
-	  this->id, ns, this->totalns, this->count, this->minns, this->maxns);
+  fprintf(stderr, "%d: Diff=%ld, TotalNS=%ld, Count=%ld, Min=%lu, Max=%lu\n"
+	  "TotalCycles:%ld, Total Instructions:%ld\n",
+	  this->id, ns, data.totalns, data.count, data.minns, data.maxns, \
+	  data.totalCYC, data.totalINS);
 #endif
 }
 
@@ -326,6 +365,7 @@ struct SourceThreadArg {
 void * sourceThread(void *arg) {
   struct SourceThreadArg *sarg = arg;
   source_t this                = sarg->src;
+  data_t   data                = this->data;
   double   delay               = this->sleep;
   ts_t     thedelay            = { .tv_sec = 0, .tv_nsec = 0 };
   ts_t     ndelay              = { .tv_sec = 0, .tv_nsec = 0 };
@@ -354,6 +394,70 @@ void * sourceThread(void *arg) {
   
   pinCpu(sarg->cpu, name);
 
+  /* Init Papi Per Source */
+  int retval;
+  PAPI_option_t opts;
+  
+  // Initialize the PAPI library
+  retval = PAPI_library_init(PAPI_VER_CURRENT);
+  if (retval != PAPI_VER_CURRENT) {
+    fprintf(stderr, "PAPI library init error!\n");
+    printf("PAPI error %d: %s\n", retval, PAPI_strerror(retval));
+    exit(1);
+  }
+  
+  // Create the Event Set
+  if (PAPI_create_eventset(&data.EventSet) != PAPI_OK) {
+    fprintf(stderr, "Error creating event set\n");
+    printf("PAPI error %d: %s\n", retval, PAPI_strerror(retval));
+    exit(1);
+  }
+
+  // Force event set to be associated with component 0 (perf_events component provides all core events)
+  // CJ Notes -- wasn't able to find exactly why it is necessary before attach CPU
+  retval = PAPI_assign_eventset_component( data.EventSet, 0 );
+  if (retval != PAPI_OK ) {
+    fprintf(stderr, "PAPI_assign_eventset_component\n");
+    printf("PAPI error %d: %s\n", retval, PAPI_strerror(retval));
+    exit(1);
+  }
+
+  // Attach this event set to source cpu
+  opts.cpu.eventset = data.EventSet;
+  opts.cpu.cpu_num = sarg->cpu;
+
+  retval = PAPI_set_opt( PAPI_CPU_ATTACH, &opts ); 
+  if ( retval != PAPI_OK ) {
+    // fprintf(stderr, "Can't PAPI_CPU_ATTACH: %s\n", PAPI_strerror(retval));
+    fprintf(stderr, "Error attaching event set to CPU\n");
+    printf("PAPI error %d: %s\n", retval, PAPI_strerror(retval));
+    exit(1);
+  }
+
+  // Add Total Cycles
+  retval = PAPI_add_event(data.EventSet, PAPI_TOT_CYC);
+  if (retval != PAPI_OK) {
+    fprintf(stderr, "Error adding total cycles  event to event set\n");
+    printf("PAPI error %d: %s\n", retval, PAPI_strerror(retval));
+    exit(1);
+  }
+  
+  // Add Total Instructions Executed to the Event Set
+  retval = PAPI_add_event(data.EventSet, PAPI_TOT_INS);
+  if (retval != PAPI_OK) {
+    fprintf(stderr, "Error adding total instructions event to event set\n");
+    printf("PAPI error %d: %s\n", retval, PAPI_strerror(retval));
+    exit(1);
+  }
+
+  // Start counting events in the Event Set
+  retval = PAPI_start(data.EventSet);
+  if (retval != PAPI_OK) {
+    fprintf(stderr, "Error starting event counting\n");
+    printf("PAPI error %d: %s\n", retval, PAPI_strerror(retval));
+    exit(1);
+  }
+  
   pthread_barrier_wait(sarg->barrier); // waits for all srcs to be ready then sends events
   
   while ( !flag ) {
@@ -369,6 +473,14 @@ void * sourceThread(void *arg) {
 #endif
 #endif
   }
+  
+  retval = PAPI_stop(data.EventSet, data.values);
+  if ( retval != PAPI_OK) {
+    fprintf(stderr, "Error stopping event counting\n");
+    printf("PAPI error %d: %s\n", retval, PAPI_strerror(retval));
+    exit(1);
+  }
+  
   free(sarg);
   return NULL;
 }
@@ -435,7 +547,7 @@ main(int argc, char **argv)
     return(-1);
   }
 
-  getCPUInfo(&cores_per_socket, &sockets);
+  getCPUInfo(&cores_per_socket, &sockets); // TODO fix with numa.h
   total_cpu = cores_per_socket * sockets;
 
   /* ------- Init Event Processor ------- */
@@ -463,15 +575,16 @@ main(int argc, char **argv)
   srand((unsigned)time(NULL)); // uniquely setting rand val seed
   
   for (int i=0; i<Num_Sources; i++) {
-    source_t src = &Sources[i];
-    src->ep      = &ep;
-    src->sleep   = srcsleep;
-    src->id      = id; id++;
+    source_t src        = &Sources[i];
+    src->ep             = &ep;
+    src->sleep          = srcsleep;
+    src->id             = id; id++;
+    src->data.EventSet = PAPI_NULL;
     source_event_reset(src);
-    src->totalns = 0;
-    src->minns   = (uint64_t)-1;
-    src->maxns   = 0;
-    src->count   = 0;
+    src->data.totalns  = 0;
+    src->data.minns    = (uint64_t)-1;
+    src->data.maxns    = 0;
+    src->data.count    = 0;
   }
 
 
@@ -612,7 +725,6 @@ main(int argc, char **argv)
   
   pinCpu(runner_cpu, "main thread"); 
 
-
   /* ------- Run Event Processor ------- */
   pthread_create(&tid, NULL, epThread, &eparg);
 
@@ -635,15 +747,19 @@ main(int argc, char **argv)
 
   flag = 1;
   pthread_barrier_wait(&idlebarrier);
-  
+
+  uint64_t meanLat, meanCYC, meanINS;
   /* ------- Latency Logging ------- */
-  fprintf(stdout, "ID,Min,Max,Mean\n");
+  fprintf(stdout, "ID,Min Latency,Max Latency,Mean Latency, Mean Cycle Count, Mean Inst. Completed\n");
   for (int i=0; i<Num_Sources; i++) {
     source_t src = &Sources[i];
-    if(src->count == 0) { continue; } // never got a chance to finish event
-    uint64_t mean = (src->totalns / src->count);
-    fprintf(stdout, "%d,%"PRIu64",%"PRIu64",%"PRIu64"\n",
-	    src->id, src->minns, src->maxns, mean);
+    data_t data = src->data;
+    if(data.count == 0) { continue; } // never got a chance to finish event
+    meanLat = (data.totalns / data.count);
+    meanCYC = (data.totalCYC / data.count);
+    meanINS = (data.totalINS / data.count);
+    fprintf(stdout, "%d,%"PRIu64",%"PRIu64",%"PRIu64",%"PRIu64",%"PRIu64"\n",
+	    src->id, data.minns, data.maxns, meanLat, meanCYC, meanINS);
   }
   
   free(Sources);

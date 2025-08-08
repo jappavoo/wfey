@@ -1,0 +1,3 @@
+[submodule "papi"]
+	path = papi
+	url = git@github.com:icl-utk-edu/papi.git
