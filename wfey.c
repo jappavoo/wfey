@@ -11,6 +11,11 @@
 #include <assert.h>
 #include <time.h>
 
+#include <linux/perf_event.h>
+#include <asm/unistd.h>
+#include <sys/ioctl.h>
+#include <string.h>
+
 #define NYI { fprintf(stderr, "%s: %d: NYI\n", __func__, __LINE__); assert(0); }
 
 //#define BUSY_POLL
@@ -55,6 +60,44 @@ int flag = 0;
 #define SECTORUN (30.0)
 #define TIMETORUN (SECTORUN*NSEC_IN_SECOND)
 
+#define TOTAL_PERF_EVENTS 2
+
+struct read_format {
+  uint64_t nr;      // number of events
+  struct {
+    uint64_t value; // value of event
+    uint64_t id;
+  } values[TOTAL_PERF_EVENTS];
+};
+
+static long
+perf_event_open(struct perf_event_attr *hw_event, pid_t pid,
+                int cpu, int group_fd, unsigned long flags)
+{
+  int ret;
+
+  ret = syscall(__NR_perf_event_open, hw_event, pid, cpu,
+		group_fd, flags);
+
+  if (ret == -1) {
+    fprintf(stderr, "Error creating event\n");
+    exit(EXIT_FAILURE);
+  }
+  
+  return ret;
+}
+
+void
+configure_perf_event(struct perf_event_attr *pe, uint32_t type, uint64_t config) {
+  memset(pe, 0, sizeof(struct perf_event_attr));
+  pe->type = type;                                         // type of event
+  pe->size = sizeof(struct perf_event_attr); 
+  pe->config = config;                                     // type specific config
+  pe->read_format = PERF_FORMAT_GROUP | PERF_FORMAT_ID;    // values returned in read
+  pe->disabled = 1;                                        // off by default
+  pe->exclude_kernel = 1;                                  // don't count kernel
+}
+
 static inline int
 ts_now(ts_t *now)
 {
@@ -73,7 +116,7 @@ ts_diff(ts_t start, ts_t end)
 {
   uint64_t diff=((end.tv_sec - start.tv_sec)*NSEC_IN_SECOND) + (end.tv_nsec - start.tv_nsec);
   return diff;
-} 
+}
 
 static inline void
 SEV()
@@ -259,6 +302,49 @@ epThread(void *arg)
   uint64_t spurious          = 0;
   uint64_t events            = 0;
   char     name[80];
+
+  ts_t start_time;
+  ts_t current_time;
+  uint64_t elapsed_time = 0.0;
+
+  ts_t active_cycle_start;
+  ts_t active_cycle_end;
+  uint64_t active_cycle_total = 0.0;
+    
+  ts_t inactive_cycle_start;
+  ts_t inactive_cycle_end;
+  uint64_t inactive_cycle_total = 0.0;
+
+#ifdef BUSY_POLL
+  (void) inactive_cycle_start;
+  (void) inactive_cycle_end;
+#endif
+
+  /* ------- Setting up PERF counters ------- */
+
+  int pe_fd[TOTAL_PERF_EVENTS];                     // pe_fd[0] will be the group leader file descriptor
+  int pe_id[TOTAL_PERF_EVENTS];                     // event pe_ids for file descriptors
+  uint64_t pe_val[TOTAL_PERF_EVENTS];            // Counter value array corresponding to fd/id array.
+  struct perf_event_attr pe[TOTAL_PERF_EVENTS];  // Configuration structure for perf events 
+  struct read_format counter_results;
+
+  // Configure the group of PMUs to count
+  configure_perf_event(&pe[0], PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES);
+  configure_perf_event(&pe[1], PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS);
+
+  // Create event group leader
+  pe_fd[0] = perf_event_open(&pe[0], 0, eparg->cpu, -1, 0);
+  ioctl(pe_fd[0], PERF_EVENT_IOC_ID, &pe_id[0]);
+  // Create the rest of the events -- with pe_fd[0] as the group leader
+  for(int i = 1; i < TOTAL_PERF_EVENTS; i++){
+    pe_fd[i] = perf_event_open(&pe[i], 0, eparg->cpu, pe_fd[0], 0);
+    ioctl(pe_fd[i], PERF_EVENT_IOC_ID, &pe_id[i]);
+  }
+
+  ioctl(pe_fd[0], PERF_EVENT_IOC_RESET, PERF_IOC_FLAG_GROUP);
+  
+  /* ---------------------------------------- */
+  
   snprintf(name, 80, "EP:%p:%d",this,id);
   pinCpu(eparg->cpu, name);
   
@@ -274,16 +360,17 @@ epThread(void *arg)
   // we are now ready to accept events
   pthread_barrier_wait(eparg->barrier);
 
-
-  ts_t start_time;
-  ts_t current_time;
-  uint64_t elapsed_time = 0.0;
-  
+  ts_now(&(active_cycle_start));
   ts_now(&(start_time));
+
+  ioctl(pe_fd[0], PERF_EVENT_IOC_ENABLE, PERF_IOC_FLAG_GROUP);
   
   while ( elapsed_time < TIMETORUN ) {
 #ifndef BUSY_POLL
+    ts_now(&(inactive_cycle_start));
     WFE();
+    ts_now(&(inactive_cycle_end));
+    inactive_cycle_total += ts_diff(inactive_cycle_start, inactive_cycle_end);
 #ifdef USE_MONITOR
     // re-arm immediately to ensure do no loose
     // event signals that happen after process
@@ -311,8 +398,37 @@ epThread(void *arg)
     elapsed_time = ts_diff(start_time, current_time);
   }
   // all done
+
+  // Stop perf counters
+  ioctl(pe_fd[0], PERF_EVENT_IOC_DISABLE, PERF_IOC_FLAG_GROUP);
+  
+  ts_now(&(active_cycle_end));
+
+  active_cycle_total = ts_diff(active_cycle_start, active_cycle_end);
+  
   fprintf(stderr, "%s:%p:%d wakeups=%ld spurious=%ld events=%ld\n",
 	  __FUNCTION__,this, id, wakeups, spurious, events);
+  fprintf(stderr, "total active cycles:%ld, total inactive cycles:%ld, diff:%ld\n", active_cycle_total, inactive_cycle_total, active_cycle_total-inactive_cycle_total);
+
+
+  // Read the group of perf counters
+  read(pe_fd[0], &counter_results, sizeof(struct read_format));
+  printf("Num events captured: %"PRIu64"\n", counter_results.nr);
+  for(int i = 0; i < counter_results.nr; i++) {
+    for(int j = 0; j < TOTAL_PERF_EVENTS ;j++){
+      if(counter_results.values[i].id == pe_id[j]){
+        pe_val[i] = counter_results.values[i].value;
+      }
+    }
+  }
+  printf("CPU cycles: %"PRIu64"\n", pe_val[0]);
+  printf("Instructions retired: %"PRIu64"\n", pe_val[1]);
+
+  // Close counter file descriptors
+  for(int i = 0; i < TOTAL_PERF_EVENTS; i++){
+    close(pe_fd[i]);
+  }
+  
   pthread_barrier_wait(eparg->barrier);
   return NULL;
 }
