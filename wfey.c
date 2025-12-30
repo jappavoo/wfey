@@ -193,7 +193,6 @@ _Static_assert(sizeof(union Event)==CACHE_LINE_SIZE,
 
 typedef struct Source * source_t;
 void source_event_activate(source_t this)  {
-  // FIXME: add start of event time here
   ts_now(&(this->start_ts));
   __atomic_store_n(&(this->event.state), SRC_EVENT_ACTIVE,
 		   __ATOMIC_SEQ_CST);
@@ -322,8 +321,8 @@ epThread(void *arg)
 
   /* ------- Setting up PERF counters ------- */
 
-  int pe_fd[TOTAL_PERF_EVENTS];                     // pe_fd[0] will be the group leader file descriptor
-  int pe_id[TOTAL_PERF_EVENTS];                     // event pe_ids for file descriptors
+  int pe_fd[TOTAL_PERF_EVENTS];                  // pe_fd[0] will be the group leader file descriptor
+  int pe_id[TOTAL_PERF_EVENTS];                  // event pe_ids for file descriptors
   uint64_t pe_val[TOTAL_PERF_EVENTS];            // Counter value array corresponding to fd/id array.
   struct perf_event_attr pe[TOTAL_PERF_EVENTS];  // Configuration structure for perf events 
   struct read_format counter_results;
@@ -405,15 +404,10 @@ epThread(void *arg)
   ts_now(&(active_cycle_end));
 
   active_cycle_total = ts_diff(active_cycle_start, active_cycle_end);
-  
-  fprintf(stderr, "%s:%p:%d wakeups=%ld spurious=%ld events=%ld\n",
-	  __FUNCTION__,this, id, wakeups, spurious, events);
-  fprintf(stderr, "total active cycles:%ld, total inactive cycles:%ld, diff:%ld\n", active_cycle_total, inactive_cycle_total, active_cycle_total-inactive_cycle_total);
-
 
   // Read the group of perf counters
   read(pe_fd[0], &counter_results, sizeof(struct read_format));
-  printf("Num events captured: %"PRIu64"\n", counter_results.nr);
+ 
   for(int i = 0; i < counter_results.nr; i++) {
     for(int j = 0; j < TOTAL_PERF_EVENTS ;j++){
       if(counter_results.values[i].id == pe_id[j]){
@@ -421,9 +415,15 @@ epThread(void *arg)
       }
     }
   }
-  printf("CPU cycles: %"PRIu64"\n", pe_val[0]);
-  printf("Instructions retired: %"PRIu64"\n", pe_val[1]);
-
+  
+  // Printing event processor stats
+  fprintf(stderr, "%s:%p:%d wakeups=%ld, spurious=%ld, events=%ld, "	\
+	  "active cycles=%ld, inactive cycles=%ld, cycle diff=%ld, "	\
+	  "CPU cycles=%"PRIu64", Instructions retired=%"PRIu64"\n",	\
+	  __FUNCTION__,this, id, wakeups, spurious, events,		\
+	  active_cycle_total, inactive_cycle_total, active_cycle_total-inactive_cycle_total, \
+	  pe_val[0], pe_val[1]);
+  
   // Close counter file descriptors
   for(int i = 0; i < TOTAL_PERF_EVENTS; i++){
     close(pe_fd[i]);
@@ -458,7 +458,6 @@ void * sourceThread(void *arg) {
   double mod_perc = (double)(rand()%(DELAYADD + 1))/100.0; // rand()%((max+1)-min) + min
   double delay_modifier = delay * mod_perc;
   delay = ( (rand()%2) == 0 ) ? delay + delay_modifier : delay - delay_modifier;
-  
   
   if (delay >= 1.0) {
     thedelay.tv_sec = (time_t)delay;
@@ -573,8 +572,9 @@ main(int argc, char **argv)
   // divided by the number of sources to get per event rate
   // srcsleep    = strtod(argv[3],NULL);
   uint64_t event_rate            = atoi(argv[1]);
-  uint64_t event_rate_per_source = event_rate / Num_Sources;
+  double event_rate_per_source = (double)event_rate / (double)Num_Sources;
   srcsleep                       = 1.0/event_rate_per_source;
+  
   
   srand((unsigned)time(NULL)); // uniquely setting rand val seed
   

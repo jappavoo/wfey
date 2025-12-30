@@ -2,7 +2,7 @@
 
 #set -x
 
-# This script should be run with "taskset -c 80"
+# This script should be run with "taskset -c $runnercpu"
 source ./scripts/env.sh
 times_to_run=1
 
