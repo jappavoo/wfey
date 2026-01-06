@@ -506,7 +506,7 @@ void * idleThread(void *arg) {
     WFI();
   }
 
-  pthread_barrier_wait(&idlebarrier);
+  //pthread_barrier_wait(&idlebarrier);
   free(iarg);
   return NULL;
 }
@@ -750,7 +750,7 @@ main(int argc, char **argv)
   pthread_barrier_wait(&epbarrier);
 
   flag = 1;
-  pthread_barrier_wait(&idlebarrier);
+  //thread_barrier_wait(&idlebarrier);
   
   /* ------- Latency Logging ------- */
   fprintf(stdout, "ID,Min,Max,Mean\n");
