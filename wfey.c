@@ -417,9 +417,9 @@ epThread(void *arg)
   }
   
   // Printing event processor stats
-  fprintf(stderr, "%s:%p:%d wakeups=%ld, spurious=%ld, events=%ld, "	\
-	  "active cycles=%ld, inactive cycles=%ld, cycle diff=%ld, "	\
-	  "CPU cycles=%"PRIu64", Instructions retired=%"PRIu64"\n",	\
+  fprintf(stderr, "%s=%p, ID=%d, Total Wakeups=%ld, Spurious Wakeups=%ld, Events=%ld, " \
+	  "Active Cycles=%ld, Inactive Cycles=%ld, Cycle Diff=%ld, "	\
+	  "CPU Cycles=%"PRIu64", Instructions Retired=%"PRIu64"\n",	\
 	  __FUNCTION__,this, id, wakeups, spurious, events,		\
 	  active_cycle_total, inactive_cycle_total, active_cycle_total-inactive_cycle_total, \
 	  pe_val[0], pe_val[1]);
