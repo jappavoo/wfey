@@ -40,15 +40,15 @@ mkdir -p $LOGPATH
 ## This script should contain a function called 'powerLog' which should
 ## take in the Path and the Data args to create a file '$LOGPATH/hwmon-${LOGDATE}.out'
 
-source $ENERGYSCRIPT
-
-powerLog "$LOGPATH" "$LOGDATE" &
+## NOTE -- I believe due to inheritance, energyscript should also be
+## taskset to the runnercpu core but I have not confirmed this yet
+bash $ENERGYSCRIPT "$LOGPATH" "$LOGDATE" &
 powerPID=$!
 
 # ---------- Run WFEY ---------- #
 
 ./$@ 1> $LOGPATH/latency-${LOGDATE}.out 2> $LOGPATH/wfey-${LOGDATE}.out
 
-sleep ${SLEEP_TO_FINISH} # Power numbers continue to go up a little after the wfey code is done
+sleep ${SLEEP_TO_FINISH} # Power numbers from hwmon continue to go up a little after the wfey code is done
 
-kill -15 $powerPID
+kill -USR1 $powerPID

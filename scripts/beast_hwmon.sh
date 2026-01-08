@@ -10,3 +10,5 @@ function powerLog() {
 	echo $(cat /sys/class/hwmon/hwmon0/power1_input) >> $LOGPATH/hwmon-${LOGDATE}.out
     done
 }
+
+powerLog "$1" "$2"
