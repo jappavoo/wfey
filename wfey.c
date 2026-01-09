@@ -15,6 +15,9 @@
 #include <asm/unistd.h>
 #include <sys/ioctl.h>
 #include <string.h>
+#include <signal.h>
+
+#include <errno.h>
 
 #define NYI { fprintf(stderr, "%s: %d: NYI\n", __func__, __LINE__); assert(0); }
 
@@ -28,6 +31,7 @@
 
 #define CLOCK_SOURCE CLOCK_MONOTONIC
 #define NSEC_IN_SECOND (1000000000)
+#define USEC_IN_SECOND (1000000)
 #define NULL_WORK_COUNT (10000)
 
 #ifdef COHERENCY_LINE_SIZE
@@ -47,18 +51,16 @@
 #define NUM_EVENT_CPUS 1 // currently locked in at 1, but should be dynamic in the future
 #define META_THREAD 1 // just for clarity
 
-pthread_barrier_t idlebarrier;
+pthread_barrier_t endbarrier;
+pthread_barrier_t idlebarrier; // TODO remove when all instances removed
 
 // Time  handling code
 typedef struct timespec ts_t;
 
-// Exit Condition
-int flag = 0;
-
 // Sources Random Delay
 #define DELAYADD (10) // max percentage of delay to +- delay
 #define SECTORUN (30.0)
-#define TIMETORUN (SECTORUN*NSEC_IN_SECOND)
+#define TIMETORUN (SECTORUN*USEC_IN_SECOND)
 
 #define TOTAL_PERF_EVENTS 2
 
@@ -97,6 +99,9 @@ configure_perf_event(struct perf_event_attr *pe, uint32_t type, uint64_t config)
   pe->disabled = 1;                                        // off by default
   pe->exclude_kernel = 1;                                  // don't count kernel
 }
+
+// Signal Handler for End Signaling
+void empty_handler(int sig_no, siginfo_t* info, void *context){};
 
 static inline int
 ts_now(ts_t *now)
@@ -180,6 +185,8 @@ struct Source {
   ep_t ep;
   double sleep;
   int id;
+  pthread_t tid;
+  volatile sig_atomic_t end_flag;
   ts_t start_ts;
   ts_t end_ts;
   uint64_t totalns;
@@ -265,6 +272,8 @@ _Static_assert(sizeof(union EventSignal)==CACHE_LINE_SIZE,
 struct EventProcessor {
   union EventSignal eventSignal;
   int id;
+  pthread_t tid;
+  volatile sig_atomic_t end_flag;
 };
 
 static inline void nullwork() {
@@ -301,10 +310,6 @@ epThread(void *arg)
   uint64_t spurious          = 0;
   uint64_t events            = 0;
   char     name[80];
-
-  ts_t start_time;
-  ts_t current_time;
-  uint64_t elapsed_time = 0.0;
 
   ts_t active_cycle_start;
   ts_t active_cycle_end;
@@ -360,11 +365,10 @@ epThread(void *arg)
   pthread_barrier_wait(eparg->barrier);
 
   ts_now(&(active_cycle_start));
-  ts_now(&(start_time));
 
   ioctl(pe_fd[0], PERF_EVENT_IOC_ENABLE, PERF_IOC_FLAG_GROUP);
-  
-  while ( elapsed_time < TIMETORUN ) {
+
+  while ( !this->end_flag ) {    
 #ifndef BUSY_POLL
     ts_now(&(inactive_cycle_start));
     WFE();
@@ -392,9 +396,6 @@ epThread(void *arg)
 	EP_handle_event(this, src);
       }
     }
-    
-    ts_now(&(current_time));
-    elapsed_time = ts_diff(start_time, current_time);
   }
   // all done
 
@@ -448,7 +449,7 @@ void * sourceThread(void *arg) {
   ts_t     nrem                = { .tv_sec = 0, .tv_nsec = 0 };
   int      id                  = this->id;
   char     name[80];
-
+  
 #ifdef USE_DOORBELL
   ep_t     ep                  = this->ep;
   doorbell_t *db = &(ep->eventSignal.db);
@@ -464,16 +465,20 @@ void * sourceThread(void *arg) {
     delay = delay - thedelay.tv_sec;
   }
   thedelay.tv_nsec = delay * (double)NSEC_IN_SECOND;
-
+  
   snprintf(name, 80, "SRC:%p:%d",this,id);
   
   pinCpu(sarg->cpu, name);
 
   pthread_barrier_wait(sarg->barrier); // waits for all srcs to be ready then sends events
+
   
-  while ( !flag ) {
-    ndelay = thedelay; 
+  while ( !this->end_flag ) {
+    ndelay = thedelay;
     while (nanosleep(&ndelay,&nrem)<0) {
+      if (this->end_flag) {
+	break;
+      }
       ndelay = nrem;
     }
     source_event_activate(this);
@@ -484,7 +489,9 @@ void * sourceThread(void *arg) {
 #endif
 #endif
   }
+
   free(sarg);
+  pthread_barrier_wait(&endbarrier);
   return NULL;
 }
 
@@ -502,12 +509,8 @@ void * idleThread(void *arg) {
 
   pinCpu(iarg->cpu, name);
 
-  while ( !flag ) {
-    WFI();
-  }
-
-  //pthread_barrier_wait(&idlebarrier);
   free(iarg);
+  pthread_barrier_wait(&endbarrier);
   return NULL;
 }
 
@@ -553,15 +556,29 @@ main(int argc, char **argv)
   getCPUInfo(&cores_per_socket, &sockets);
   total_cpu = cores_per_socket * sockets;
 
+
+  /* ------- Init Signal Handler ------- */
+  struct sigaction sigact;
+  struct sigaction old_sigact;
+  
+  memset(&sigact, 0, sizeof(sigact));
+  
+  sigact.sa_sigaction = empty_handler;
+  sigemptyset(&sigact.sa_mask);
+  sigact.sa_flags = SA_SIGINFO;   // not including SA_RESTART bc dont want WFE/SLEEP to continue 
+  sigaction(SIGUSR1, &sigact, &old_sigact);
+  
+  
   /* ------- Init Event Processor ------- */
   // initalize event processor (only one right now)
   ep.id        = id; id++;
   // eventSignal initalization will be handled by the EP thread
   // intialize event processing thread
   pthread_barrier_init(&epbarrier, NULL, 2);
-  eparg.ep      = &ep;
-  eparg.barrier = &epbarrier;
-  eparg.cpu     = EVENT_CPU_ID; //atoi(argv[2]);
+  eparg.ep          = &ep;
+  eparg.ep->end_flag = 0;
+  eparg.barrier     = &epbarrier;
+  eparg.cpu         = EVENT_CPU_ID; //atoi(argv[2]);
 
 
   /* ------- Init Sources ------- */
@@ -570,11 +587,17 @@ main(int argc, char **argv)
 
   // Rate of Events per source is NumEventsPerSec == argv[1]
   // divided by the number of sources to get per event rate
-  // srcsleep    = strtod(argv[3],NULL);
-  uint64_t event_rate            = atoi(argv[1]);
+  double event_rate            = atof(argv[1]);
+  if ( event_rate < 0.0 ) {
+    fprintf(stderr, "Error: Cannot have a negative event rate\n");
+    return(-1);
+  }
+  
+  if ( event_rate == 0.0) {
+    event_rate = 0.00000001; // Very small number that will never send events
+  }
   double event_rate_per_source = (double)event_rate / (double)Num_Sources;
   srcsleep                       = 1.0/event_rate_per_source;
-  
   
   srand((unsigned)time(NULL)); // uniquely setting rand val seed
   
@@ -595,6 +618,10 @@ main(int argc, char **argv)
   struct IdleThreadArg *iarg;
   uint64_t num_idle, cpuid;
 
+  // HUGE TODO!!!!!!!!!! -- sanity check num sources, the number of idle threads on the barriers, and add num sources to barrier count for all cases
+  // might be idle to rename barrier
+  // where runner and main are should be fixed as well
+  
   num_idle = total_cpu - ( NUM_EVENT_CPUS + Num_Sources + META_THREAD );
   
 #ifdef SOCKETSPLIT
@@ -633,7 +660,9 @@ main(int argc, char **argv)
   // Where Main and Runners should run
   runner_cpu = cores_per_socket; // first core on 2nd socket
 
-  if (num_idle != 0) { pthread_barrier_init(&idlebarrier, NULL, num_idle); }
+  // TODO -- idle barrier to end barrier and add the sources to that barrier
+  NYI;
+  // if (num_idle != 0) { pthread_barrier_init(&idlebarrier, NULL, num_idle); }
   
   /* Running Idle Threads on Socket 1 */
   // All but the event processors on the first node
@@ -675,12 +704,13 @@ main(int argc, char **argv)
     source_end = cpuid + Num_Sources;
     runner_cpu = cores_per_socket - 1; // last core on socket
 
-    if (num_idle != 0) { pthread_barrier_init(&idlebarrier, NULL, num_idle); }
+    // TODO double check this addition
+    if (num_idle != 0) { pthread_barrier_init(&endbarrier, NULL, num_idle + Num_Sources + 1); }
     
     for (int i = source_end; i < (total_cpu-META_THREAD); i++){ 
       iarg = malloc(sizeof(struct IdleThreadArg));
       iarg->cpu = i;
-      iarg->barrier = &idlebarrier;
+      iarg->barrier = &endbarrier; // TODO -- is this used in struct?
       pthread_create(&tid, NULL, idleThread, iarg);
     }
     
@@ -707,8 +737,9 @@ main(int argc, char **argv)
     source_end = cpuid + Num_Sources;
     runner_cpu = cores_per_socket; // first core on 2nd socket
     
-    
-    if (num_idle != 0) { pthread_barrier_init(&idlebarrier, NULL, num_idle); }
+    // TODO idle to end
+    NYI;
+    //if (num_idle != 0) { pthread_barrier_init(&idlebarrier, NULL, num_idle); }
 
     for (int i = source_end; i < cores_per_socket; i++){ // All but the event processors on the first node
       iarg = malloc(sizeof(struct IdleThreadArg));
@@ -728,37 +759,60 @@ main(int argc, char **argv)
   
   pinCpu(runner_cpu, "main thread"); 
 
-
   /* ------- Run Event Processor ------- */
-  pthread_create(&tid, NULL, epThread, &eparg);
+  pthread_create(&eparg.ep->tid, NULL, epThread, &eparg);
 
   // wait for event processor to be ready
   pthread_barrier_wait(&epbarrier);
   pthread_barrier_init(&epbarrier, NULL, 2);  // reset the barrier 
 
   /* ------- Run Source Threads ------- */
-  pthread_barrier_init(&srcbarrier, NULL, Num_Sources); // set up barrier for all src to init
+  pthread_barrier_init(&srcbarrier, NULL, Num_Sources+1); // set up barrier for all src to init
   for (int i=0; i<Num_Sources; i++) {
     sarg      = malloc(sizeof(struct SourceThreadArg));
     sarg->src = &(Sources[i]);
     //sarg->cpu = atoi(argv[4+i]);
     sarg->cpu = cpuid++;
     sarg->barrier = &srcbarrier;
-    pthread_create(&tid, NULL, sourceThread, sarg);
+    sarg->src->end_flag=0;
+    pthread_create(&sarg->src->tid, NULL, sourceThread, sarg);
   }
-  // wait for event processor to finish
-  pthread_barrier_wait(&epbarrier);
+  pthread_barrier_wait(&srcbarrier);
+  
+  usleep(TIMETORUN);
 
-  flag = 1;
-  //thread_barrier_wait(&idlebarrier);
+  // TODO : have a list of event processors like we do for sources
+  eparg.ep->end_flag = 1;
+  pthread_kill(eparg.ep->tid, SIGUSR1);
+  
+  // Wait for event processor to finish
+  pthread_barrier_wait(&epbarrier);
+  
+  // Extra verification sources not stuck in sleep
+  // Individual flags sent because dont want to send a signal
+  // to an already cleaned up source
+  for (int i=0; i<Num_Sources; i++) {
+    source_t src = &Sources[i];
+    src->end_flag=1;
+    pthread_kill(src->tid, SIGUSR1);
+  }
+  
+  // Wait for all source and idle threads to clean up and return
+  pthread_barrier_wait(&endbarrier);
   
   /* ------- Latency Logging ------- */
+  /// TODO -- possible segfault occuring with the latency
+  float mean;
+  
   fprintf(stdout, "ID,Min,Max,Mean\n");
   for (int i=0; i<Num_Sources; i++) {
     source_t src = &Sources[i];
-    if(src->count == 0) { continue; } // never got a chance to finish event
-    uint64_t mean = (src->totalns / src->count);
-    fprintf(stdout, "%d,%"PRIu64",%"PRIu64",%"PRIu64"\n",
+    if(src->count == 0) { // never got a chance to finish event
+      src->minns = 0; src->maxns = 0; mean = -1;
+    } else {
+      mean = (src->totalns / (double)src->count);
+    }
+    fprintf(stdout, "%d,%"PRIu64",%"PRIu64",%.2f\n",
 	    src->id, src->minns, src->maxns, mean);
   }
   
