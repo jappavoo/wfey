@@ -4,7 +4,6 @@
 
 # This script should be run with "taskset -c $runnercpu"
 source ./scripts/env.sh
-times_to_run=1
 
 for ((i = 0 ; i < ${times_to_run} ; i++ )); do
     for config in "${wfeyconfig[@]}"; do
