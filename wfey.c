@@ -361,10 +361,18 @@ epThread(void *arg)
   armMonitor(db);
 #endif
 
+  // TODO -- fixing energy collecting
+  /* -- maybe pass in prefix path
+    open( /sys/class/hwmon/hwmon5/energy{core no+1}_input )
+    read({long int}) -- gives back energy value
+    (read instead of scanf to reduce time from conversion -- of hot path)
+  */
   // we are now ready to accept events
   pthread_barrier_wait(eparg->barrier);
 
   ts_now(&(active_cycle_start));
+  // TODO above
+  // do the read here to get the string value of energy for this core
 
   ioctl(pe_fd[0], PERF_EVENT_IOC_ENABLE, PERF_IOC_FLAG_GROUP);
 
