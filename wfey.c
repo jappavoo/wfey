@@ -29,6 +29,11 @@
 
 //#define VERBOSE
 
+// PERF ELIMINATION
+/* 0 = no performance values, 1 = only PERF events, 2 = PERF events and active/inactive timing */
+#define WITHPERF 0
+
+
 #define CLOCK_SOURCE CLOCK_MONOTONIC
 #define NSEC_IN_SECOND (1000000000)
 #define USEC_IN_SECOND (1000000)
@@ -59,7 +64,7 @@ typedef struct timespec ts_t;
 
 // Sources Random Delay
 #define DELAYADD (10) // max percentage of delay to +- delay
-#define SECTORUN (30.0)
+#define SECTORUN (10.0)
 #define TIMETORUN (SECTORUN*USEC_IN_SECOND)
 
 #define TOTAL_PERF_EVENTS 2
@@ -72,7 +77,7 @@ struct read_format {
   } values[TOTAL_PERF_EVENTS];
 };
 
-static long
+[[maybe_unused]] static long
 perf_event_open(struct perf_event_attr *hw_event, pid_t pid,
                 int cpu, int group_fd, unsigned long flags)
 {
@@ -311,24 +316,36 @@ epThread(void *arg)
   uint64_t events            = 0;
   char     name[80];
 
+  uint64_t start_energy = 0;
+  uint64_t end_energy = 0;
+  
+  
+#if WITHPERF == 2
   ts_t active_cycle_start;
   ts_t active_cycle_end;
-  uint64_t active_cycle_total = 0.0;
     
   ts_t inactive_cycle_start;
   ts_t inactive_cycle_end;
-  uint64_t inactive_cycle_total = 0.0;
-
+  
 #ifdef BUSY_POLL
   (void) inactive_cycle_start;
   (void) inactive_cycle_end;
-#endif
+#endif // BUSY_POLL
+  
+#endif // WITHPERF 2
+
+  uint64_t active_cycle_total = 0.0;
+  uint64_t inactive_cycle_total = 0.0;
 
   /* ------- Setting up PERF counters ------- */
-
+  
+  uint64_t pe_val[TOTAL_PERF_EVENTS];            // Counter value array corresponding to fd/id array.
+  fprintf(stderr, "size of pe_val =%ld\n", sizeof(pe_val));
+  memset(pe_val, 0, sizeof(pe_val));
+  
+#if WITHPERF >= 1
   int pe_fd[TOTAL_PERF_EVENTS];                  // pe_fd[0] will be the group leader file descriptor
   int pe_id[TOTAL_PERF_EVENTS];                  // event pe_ids for file descriptors
-  uint64_t pe_val[TOTAL_PERF_EVENTS];            // Counter value array corresponding to fd/id array.
   struct perf_event_attr pe[TOTAL_PERF_EVENTS];  // Configuration structure for perf events 
   struct read_format counter_results;
 
@@ -348,6 +365,7 @@ epThread(void *arg)
   ioctl(pe_fd[0], PERF_EVENT_IOC_RESET, PERF_IOC_FLAG_GROUP);
   
   /* ---------------------------------------- */
+#endif // WITHPERF >= 1
   
   snprintf(name, 80, "EP:%p:%d",this,id);
   pinCpu(eparg->cpu, name);
@@ -370,25 +388,39 @@ epThread(void *arg)
   // we are now ready to accept events
   pthread_barrier_wait(eparg->barrier);
 
+#if WITHPERF == 2
   ts_now(&(active_cycle_start));
+#endif // WITHPERF 2
+
   // TODO above
   // do the read here to get the string value of energy for this core
-
+  
+#if WITHPERF >= 1
   ioctl(pe_fd[0], PERF_EVENT_IOC_ENABLE, PERF_IOC_FLAG_GROUP);
-
+#endif // WITHPERF 1
+  
   while ( !this->end_flag ) {    
 #ifndef BUSY_POLL
+
+#if WITHPERF == 2
     ts_now(&(inactive_cycle_start));
+#endif // WITHPERF 2
+
     WFE();
+
+#if WITHPERF == 2
     ts_now(&(inactive_cycle_end));
     inactive_cycle_total += ts_diff(inactive_cycle_start, inactive_cycle_end);
+#endif // WITHPERF 2
+    
 #ifdef USE_MONITOR
     // re-arm immediately to ensure do no loose
     // event signals that happen after process
     // but before going halting on WFE
     armMonitor(db);                     
-#endif
-#endif
+#endif // USE_MONITOR
+#endif // NOT BUSYPOLL
+    
     wakeups++;
 #ifdef USE_DOORBELL    
     if (!doorbell_isPressedAndReset(db)) {
@@ -396,7 +428,7 @@ epThread(void *arg)
       spurious++;
       continue;
     }    
-#endif
+#endif // USE_DOORBELL
     for (int i=0; i<Num_Sources; i++) {
       source_t src = &(Sources[i]);
       if (source_event_isActive(src)) {
@@ -407,13 +439,18 @@ epThread(void *arg)
   }
   // all done
 
+#if WITHPERF >= 1
   // Stop perf counters
   ioctl(pe_fd[0], PERF_EVENT_IOC_DISABLE, PERF_IOC_FLAG_GROUP);
-  
+#endif // WITHPERF >= 1
+
+#if WITHPERF == 2
   ts_now(&(active_cycle_end));
 
   active_cycle_total = ts_diff(active_cycle_start, active_cycle_end);
+#endif // WITHPERF 2
 
+#if WITHPERF >= 1
   // Read the group of perf counters
   read(pe_fd[0], &counter_results, sizeof(struct read_format));
  
@@ -424,19 +461,24 @@ epThread(void *arg)
       }
     }
   }
+#endif // WITHPERF >= 1
   
   // Printing event processor stats
-  fprintf(stderr, "%s=%p, ID=%d, Total Wakeups=%ld, Spurious Wakeups=%ld, Events=%ld, " \
+  fprintf(stderr, "%s=%p, ID=%d, Start Energy=%"PRIu64", End Energy=%"PRIu64", " \
+	  "Total Wakeups=%ld, Spurious Wakeups=%ld, Events=%ld, " \
 	  "Active Cycles=%ld, Inactive Cycles=%ld, Cycle Diff=%ld, "	\
 	  "CPU Cycles=%"PRIu64", Instructions Retired=%"PRIu64"\n",	\
-	  __FUNCTION__,this, id, wakeups, spurious, events,		\
+	  __FUNCTION__, this, id, start_energy, end_energy,		\
+	  wakeups, spurious, events,					\
 	  active_cycle_total, inactive_cycle_total, active_cycle_total-inactive_cycle_total, \
 	  pe_val[0], pe_val[1]);
-  
+
+#if WITHPERF >= 1
   // Close counter file descriptors
   for(int i = 0; i < TOTAL_PERF_EVENTS; i++){
     close(pe_fd[i]);
   }
+#endif
   
   pthread_barrier_wait(eparg->barrier);
   return NULL;
