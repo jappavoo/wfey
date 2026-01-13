@@ -14,6 +14,7 @@ PARAMETERS=$(echo "${*:2}")
 if [[ -z "$WFEYCONFIG" || -z "$PARAMETERS" ]]; then echo "USAGE($0): Input parameters as you would to wfey benchmark"; exit -1; fi
 # Should be checking parameter length ... 
 
+if [ ! -f $WFEYCONFIG ]; then make; fi
 
 ARGSTR=${PARAMETERS// /_}
 
@@ -42,7 +43,9 @@ mkdir -p $LOGPATH
 
 ## NOTE -- I believe due to inheritance, energyscript should also be
 ## taskset to the runnercpu core but I have not confirmed this yet
-bash $ENERGYSCRIPT "$LOGPATH" "$LOGDATE" &
+source $ENERGYSCRIPT
+
+powerLog "$LOGPATH" "$LOGDATE" &
 powerPID=$!
 
 # ---------- Run WFEY ---------- #
@@ -51,4 +54,8 @@ powerPID=$!
 
 sleep ${SLEEP_TO_FINISH} # Power numbers from hwmon continue to go up a little after the wfey code is done
 
-kill -USR1 $powerPID
+if [[ "$ENERGYTYPE"=="NOMOD" ]]; then
+    kill -USR1 $powerPID
+elif [[ "$ENERGYTYPE"=="WMOD" ]]
+    cleanup "$LOGPATH" "$LOGDATE"
+fi
