@@ -69,7 +69,6 @@ typedef struct timespec ts_t;
 
 #define TOTAL_PERF_EVENTS 2
 
-#if 1 
 struct read_format {
   uint64_t nr;      // number of events
   uint64_t time_enabled;
@@ -80,15 +79,6 @@ struct read_format {
     uint64_t lost;
   } values[TOTAL_PERF_EVENTS];
 };
-#else
-struct read_format {
-  uint64_t value; // value of event
-  uint64_t time_enabled;
-  uint64_t time_running;
-  uint64_t id;
-  uint64_t lost;
-};
-#endif
 
 [[maybe_unused]] static long
 perf_event_open(struct perf_event_attr *hw_event, pid_t pid,
@@ -366,29 +356,21 @@ epThread(void *arg)
   // Configure the group of PMUs to count
   configure_perf_event(&pe[0], PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES);
   configure_perf_event(&pe[1], PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS);
-  //configure_perf_event(&pe[0], PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS);
 
   // Create event group leader
   pe_fd[0] = perf_event_open(&pe[0], 0, -1, -1, PERF_FLAG_FD_CLOEXEC);
-  assert(pe_fd[0] != -1);
-  assert(pe_fd[0] != 0);
-  assert( ioctl(pe_fd[0], PERF_EVENT_IOC_ID, &pe_id[0]) != -1 );
-  assert(pe_fd[0] != 0);
+  ioctl(pe_fd[0], PERF_EVENT_IOC_ID, &pe_id[0]);
   // Create the rest of the events -- with pe_fd[0] as the group leader
 
   for(int i = 1; i < TOTAL_PERF_EVENTS; i++){
     pe_fd[i] = perf_event_open(&pe[i], 0, -1, pe_fd[0], PERF_FLAG_FD_CLOEXEC);
-    assert(pe_fd[i] != -1);
-    assert(pe_fd[0] != 0);
-    assert( ioctl(pe_fd[i], PERF_EVENT_IOC_ID, &pe_id[i]) != -1 );
-    assert(pe_fd[0] != 0);
+    ioctl(pe_fd[i], PERF_EVENT_IOC_ID, &pe_id[i]);
   }
 
-  assert(pe_fd[0] != 0);
   if ( ioctl(pe_fd[0], PERF_EVENT_IOC_RESET, PERF_IOC_FLAG_GROUP) == -1) {
     perror("reset");
   }
-  assert(pe_fd[0] != 0);
+
   /* ---------------------------------------- */
 #endif // WITHPERF >= 1
   
@@ -484,7 +466,7 @@ epThread(void *arg)
 #if WITHPERF >= 1
   // Read the group of perf counters
   rc = read(pe_fd[0], &counter_results, sizeof(counter_results));
-#if 1
+
   for(int i = 0; i < counter_results.nr; i++) {
     for(int j = 0; j < TOTAL_PERF_EVENTS ;j++){
       if(counter_results.values[i].id == pe_id[j]){
@@ -492,13 +474,11 @@ epThread(void *arg)
       }
     }
   }
-#else
-  pe_val[0] = counter_results.value;
-#endif
+
 #endif // WITHPERF >= 1
   
   // Printing event processor stats
-#if 1
+
   fprintf(stderr, "%s=%p, ID=%d, Core=%d, "				\
 	  "Start Energy=%"PRIu64", End Energy=%"PRIu64", Energy Diff=%"PRIu64", " \
 	  "Total Wakeups=%ld, Spurious Wakeups=%ld, Events=%ld, "	\
@@ -509,16 +489,6 @@ epThread(void *arg)
 	  wakeups, spurious, events,					\
 	  active_cycle_total, inactive_cycle_total, active_cycle_total-inactive_cycle_total, \
 	  pe_val[0], pe_val[1]);
-#else
-  fprintf(stderr, "%s=%p, ID=%d, Start Energy=%"PRIu64", End Energy=%"PRIu64", " \
-	  "Total Wakeups=%ld, Spurious Wakeups=%ld, Events=%ld, " \
-	  "Active Cycles=%ld, Inactive Cycles=%ld, Cycle Diff=%ld, "	\
-	  "CPU Cycles=%"PRIu64"\n",	\
-	  __FUNCTION__, this, id, start_energy, end_energy,		\
-	  wakeups, spurious, events,					\
-	  active_cycle_total, inactive_cycle_total, active_cycle_total-inactive_cycle_total, \
-	  pe_val[0]);
-#endif
 
 #if WITHPERF >= 1
   // Close counter file descriptors
