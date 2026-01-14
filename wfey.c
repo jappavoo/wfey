@@ -64,7 +64,7 @@ typedef struct timespec ts_t;
 
 // Sources Random Delay
 #define DELAYADD (10) // max percentage of delay to +- delay
-#define SECTORUN (5.0)
+#define SECTORUN (30.0)
 #define TIMETORUN (SECTORUN*USEC_IN_SECOND)
 
 #define TOTAL_PERF_EVENTS 2
@@ -499,11 +499,13 @@ epThread(void *arg)
   
   // Printing event processor stats
 #if 1
-  fprintf(stderr, "%s=%p, ID=%d, Start Energy=%"PRIu64", End Energy=%"PRIu64", " \
-	  "Total Wakeups=%ld, Spurious Wakeups=%ld, Events=%ld, " \
+  fprintf(stderr, "%s=%p, ID=%d, "					\
+	  "Start Energy=%"PRIu64", End Energy=%"PRIu64", Energy Diff=%"PRIu64", " \
+	  "Total Wakeups=%ld, Spurious Wakeups=%ld, Events=%ld, "	\
 	  "Active Cycles=%ld, Inactive Cycles=%ld, Cycle Diff=%ld, "	\
 	  "CPU Cycles=%"PRIu64", Instructions Retired=%"PRIu64"\n",	\
-	  __FUNCTION__, this, id, start_energy, end_energy,		\
+	  __FUNCTION__, this, id,					\
+	  start_energy, end_energy, (end_energy-start_energy),		\
 	  wakeups, spurious, events,					\
 	  active_cycle_total, inactive_cycle_total, active_cycle_total-inactive_cycle_total, \
 	  pe_val[0], pe_val[1]);
