@@ -1,3 +1,4 @@
+#include <unistd.h>
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,33 +19,43 @@
 #define JOULES_PATH_INPUT_TEMPLATE "energy%d_input"
 #endif
 
+char **wfey_hwmon_joules_paths = NULL;
 
-FILE* wfey_hwmon_joules_fopen(int core)
+
+void wfey_hwmon_joules_cache_path(int core)
 {
-  char path[MAX_PATH_LEN];
-  struct dirent *de;
-  FILE * f = NULL;
+  char path[1024];
   
-  DIR *dr = opendir(HWMON_ROOT_PATH);
-
-  if (dr == NULL) {
-    fprintf(stderr, "ERROR: %s: could not open %s\n", __func__, HWMON_ROOT_PATH);
-    f = NULL; goto done;
+  if (!wfey_hwmon_joules_paths) {
+     long n = sysconf(_SC_NPROCESSORS_CONF);
+     wfey_hwmon_joules_paths = malloc(sizeof(char *) * n);
+     bzero(wfey_hwmon_joules_paths, sizeof(char *) * n);
   }
 
+  // FIXME: CJ this is bad code 
+  if (wfey_hwmon_joules_paths[core]) return;
+  
+  struct dirent *de;
+  DIR *dr = opendir(HWMON_ROOT_PATH);
+  
+  if (dr == NULL) {
+    fprintf(stderr, "ERROR: %s: could not open %s\n", __func__, HWMON_ROOT_PATH);
+    goto done;
+  }
+  
   while ((de = readdir(dr)) != NULL) {
     if (strncmp(de->d_name, ".", 1) == 0 ||
 	strncmp(de->d_name, "..", 2) == 0 ) continue;
     snprintf(path, sizeof(path), HWMON_ROOT_PATH "/%s/name", de->d_name);
     // fprintf(stderr, "%s %s\n", de->d_name, path);
-
+    
     char name[80];
-    f = fopen(path, "r");
+    FILE *f = fopen(path, "r");
     if (f == NULL) continue;
     bzero(name, sizeof(name));
     fread(name, sizeof(name),1,f);
     fclose(f);
-
+    
     // fprintf(stderr, "%s", name);
     
     if (strncmp(name, JOULES_HWMON_NAME, 11)==0) {
@@ -58,50 +69,47 @@ FILE* wfey_hwmon_joules_fopen(int core)
       f=fopen(path, "r");
       if (f == NULL) {
 	fprintf(stderr, "ERROR: %s: could not open %s\n", __func__, path);
-	f = NULL; goto done;
+	goto done;
       }
       bzero(label, sizeof(label));
       fgets(label, sizeof(label), f);
       fclose(f);
       
       // fprintf(stderr, "%s", label)
-	;
+      ;
       if (sscanf(label, JOULES_LABEL_SCANF, &ln)!=1) {
 	fprintf(stderr, "ERROR: %s: bad label %s\n", __func__, label);
-	f = NULL; goto done;
+	goto done;
       }
       
       // fprintf(stderr, "%d\n", ln);
       
       if ( ln != core ) {
 	fprintf(stderr, "ERROR: %s: label %s core %d != core %d\n", __func__, label, ln, core);
-	f = NULL; goto done;
+	goto done;
       }
       snprintf(path, sizeof(path), HWMON_ROOT_PATH "/%s/" JOULES_PATH_INPUT_TEMPLATE, de->d_name, n);
       
       // fprintf(stderr, "%s\n", path);
-
-      f = fopen(path, "r");
-      if (f == NULL) {
-	fprintf(stderr, "ERROR: %s: failed to open %s\n", __func__, path);
-	f = NULL; goto done;
-      }
+      wfey_hwmon_joules_paths[core] = strndup(path, sizeof(path)); 
       break;
-    }
-	
+    }	
   }
  done:
   closedir(dr);
-  return f;
 }
 
 
 #ifdef __STAND_ALONE__
 int main(int argc, char **argv)
 {
-  FILE * jf= wfey_hwmon_joules_fopen(atoi(argv[1]));
-  uint64_t joules = wfey_hwmon_joules_read(jf);
-  printf("joules=%" PRIu64 "\n", joules);
+
+  int core = (argc>1) ? atoi(argv[1]) : 0;
+
+  uint64_t j1= wfey_hwmon_joules_read(core);
+  sleep(10);
+  uint64_t j2 = wfey_hwmon_joules_read(core);
+  printf("j1=%" PRIu64 " j2=%" PRIu64 "\n", j1, j2);
   return 0;
 }
   
