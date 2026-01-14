@@ -5,7 +5,11 @@
 # This script should be run with "taskset -c $runnercpu"
 source ./scripts/env.sh
 
+mkdir -p $PRETESTPATH
+
 for ((i = 0 ; i < ${times_to_run} ; i++ )); do
+    export LOGDATE=$(date +%Y-%m-%d-%H-%M-%S)
+    cat /proc/loadavg > $PRETESTPATH/loadavg-${LOGDATE}.out
     for config in "${wfeyconfig[@]}"; do
 	for events in "${eventrate[@]}"; do
 	    for eventproc in "${eventprocCPUs[@]}"; do

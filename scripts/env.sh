@@ -1,7 +1,10 @@
 SCRIPTDIR=$(dirname -- "$BASH_SOURCE")
 
+BM_ENERGY=1
+
 ## Name of experiment folder -- (all stored in parent folder 'logs') ##
-LOGS="full_sweep"
+LOGS="test"
+PRETESTPATH="logs/$LOGS/pretest/"
 
 ## How many times to run experiment ##
 times_to_run=3
