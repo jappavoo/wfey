@@ -499,12 +499,12 @@ epThread(void *arg)
   
   // Printing event processor stats
 #if 1
-  fprintf(stderr, "%s=%p, ID=%d, "					\
+  fprintf(stderr, "%s=%p, ID=%d, Core=%d, "				\
 	  "Start Energy=%"PRIu64", End Energy=%"PRIu64", Energy Diff=%"PRIu64", " \
 	  "Total Wakeups=%ld, Spurious Wakeups=%ld, Events=%ld, "	\
 	  "Active Cycles=%ld, Inactive Cycles=%ld, Cycle Diff=%ld, "	\
 	  "CPU Cycles=%"PRIu64", Instructions Retired=%"PRIu64"\n",	\
-	  __FUNCTION__, this, id,					\
+	  __FUNCTION__, this, id, eparg->cpu, 				\
 	  start_energy, end_energy, (end_energy-start_energy),		\
 	  wakeups, spurious, events,					\
 	  active_cycle_total, inactive_cycle_total, active_cycle_total-inactive_cycle_total, \
