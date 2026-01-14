@@ -65,7 +65,7 @@ typedef struct timespec ts_t;
 
 // Sources Random Delay
 #define DELAYADD (10) // max percentage of delay to +- delay
-#define SECTORUN (30.0)
+#define SECTORUN (5.0)
 #define TIMETORUN (SECTORUN*USEC_IN_SECOND)
 
 #define TOTAL_PERF_EVENTS 2
@@ -281,7 +281,6 @@ _Static_assert(sizeof(union EventSignal)==CACHE_LINE_SIZE,
 struct EventProcessor {
   union EventSignal eventSignal;
   int id;
-  FILE *energy_file;
   pthread_t tid;
   volatile sig_atomic_t end_flag;
 };
@@ -321,8 +320,8 @@ epThread(void *arg)
   uint64_t events            = 0;
   char     name[80];
 
-  uint64_t start_energy = 0;
-  uint64_t end_energy = 0;
+  double start_energy = 0.0;
+  double end_energy = 0.0;
   
   
 #if WITHPERF == 2
@@ -411,7 +410,8 @@ epThread(void *arg)
   }
 #endif // WITHPERF 1
 
-  start_energy = wfey_hwmon_joules_read(this->energy_file);
+  start_energy = wfey_hwmon_joules_read(eparg->cpu);
+  
   while ( !this->end_flag ) {    
 #ifndef BUSY_POLL
 
@@ -451,7 +451,9 @@ epThread(void *arg)
     }
   }
   // all done
-  end_energy = wfey_hwmon_joules_read(this->energy_file);
+
+  // TODO change macro
+  end_energy = wfey_hwmon_joules_read(eparg->cpu);
   
 #if WITHPERF >= 1
   // Stop perf counters
@@ -483,8 +485,10 @@ epThread(void *arg)
   
   // Printing event processor stats
 
+  start_energy = (double)start_energy/USEC_IN_SECOND;
+  end_energy = (double)end_energy/USEC_IN_SECOND;
   fprintf(stderr, "%s=%p, ID=%d, Core=%d, "				\
-	  "Start Energy=%"PRIu64", End Energy=%"PRIu64", Energy Diff=%"PRIu64", " \
+	  "Start Energy=%f, End Energy=%f, Energy Diff=%f, " \
 	  "Total Wakeups=%ld, Spurious Wakeups=%ld, Events=%ld, "	\
 	  "Active Cycles=%ld, Inactive Cycles=%ld, Cycle Diff=%ld, "	\
 	  "CPU Cycles=%"PRIu64", Instructions Retired=%"PRIu64"\n",	\
@@ -650,7 +654,7 @@ main(int argc, char **argv)
   eparg.ep->end_flag = 0;
   eparg.barrier     = &epbarrier;
   eparg.cpu         = EVENT_CPU_ID; //atoi(argv[2]);
-  eparg.ep->energy_file = wfey_hwmon_joules_fopen(eparg.cpu);
+  wfey_hwmon_joules_read(eparg.cpu);
 
   /* ------- Init Sources ------- */
   Num_Sources = atoi(argv[3]);   // create sources but don't start them
