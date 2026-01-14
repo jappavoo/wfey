@@ -4,7 +4,7 @@
 
 source ./scripts/env.sh
 set -m # enables job control
-set -x 
+#set -x 
 #VERBOSE=1
 
 SCRIPTDIR=$(dirname $0)
@@ -19,10 +19,8 @@ if [ ! -f $WFEYCONFIG ]; then make; fi
 ARGSTR=${PARAMETERS// /_}
 
 #LOGDATE=$(date +%Y-%m-%d-%H-%M-%S)
-echo $LOGDATE
 
 LOGPATH="logs/$LOGS/$WFEYCONFIG/$ARGSTR/"
-
 
 if [[ -n $VERBOSE ]]; then
     echo "SCRIPTDIR  = $SCRIPTDIR"
@@ -38,7 +36,7 @@ fi
 mkdir -p $LOGPATH
 
 
-if [[ -n "$BM_ENERGY" ]]; then
+if [[ -z "$BM_ENERGY" ]]; then
     # --------- Run ENERGY SCRIPT --------- #
     ## This script should contain a function called 'powerLog' which should
     ## take in the Path and the Data args to create a file '$LOGPATH/hwmon-${LOGDATE}.out'
@@ -55,12 +53,16 @@ fi
 
 ./$@ 1> $LOGPATH/latency-${LOGDATE}.out 2> $LOGPATH/wfey-${LOGDATE}.out
 
-if [[ -n "$BM_ENERGY" ]]; then
+if [[ -z "$BM_ENERGY" ]]; then
     sleep ${SLEEP_TO_FINISH} # Power numbers from hwmon continue to go up a little after the wfey code is done
+
+    echo "energy type is" $ENERGYTYPE
     
-    if [[ "$ENERGYTYPE"=="NOMOD" ]]; then
+    if [[ "$ENERGYTYPE" == "NOMOD" ]]; then
+	echo "nomod"
 	kill -USR1 $powerPID
-    elif [[ "$ENERGYTYPE"=="WMOD" ]]
-	 cleanup "$LOGPATH" "$LOGDATE"
+    elif [[ "$ENERGYTYPE" == "WMOD" ]]; then
+	echo "wmod"
+	cleanup "$LOGPATH" "$LOGDATE"
     fi
 fi

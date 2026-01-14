@@ -355,7 +355,6 @@ epThread(void *arg)
   int rc;
   
   uint64_t pe_val[TOTAL_PERF_EVENTS];            // Counter value array corresponding to fd/id array.
-  fprintf(stderr, "size of pe_val =%ld\n", sizeof(pe_val));
   memset(pe_val, 0, sizeof(pe_val));
   
 #if WITHPERF >= 1
@@ -485,7 +484,6 @@ epThread(void *arg)
 #if WITHPERF >= 1
   // Read the group of perf counters
   rc = read(pe_fd[0], &counter_results, sizeof(counter_results));
-  fprintf(stderr, "rc = %d\n", rc);
 #if 1
   for(int i = 0; i < counter_results.nr; i++) {
     for(int j = 0; j < TOTAL_PERF_EVENTS ;j++){

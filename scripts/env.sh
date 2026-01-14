@@ -1,5 +1,13 @@
 SCRIPTDIR=$(dirname -- "$BASH_SOURCE")
 
+## MetaVars -- Per Machine/Test ##
+#source ${SCRIPTDIR}/no_module_env.sh
+source ${SCRIPTDIR}/module_env.sh
+
+## Uncomment if you want the energy numbers to be gathered
+#  in the benchmark per epThread
+#  If commented out -- energy gathering will depend on what
+#  energy script is being used
 BM_ENERGY=1
 
 ## Name of experiment folder -- (all stored in parent folder 'logs') ##
@@ -26,9 +34,3 @@ declare -a eventrate=( "0" "10" "100" "1000" "100000")
 # None vs Many Events
 #declare -a sourceCPUs=( "1" ) 
 #declare -a eventrate=( "0" "50000")
-
-
-## MetaVars -- Per Machine/Test ##
-
-#source ${SCRIPTDIR}/no_module_env.sh
-source ${SCRIPTDIR}/module_env.sh
