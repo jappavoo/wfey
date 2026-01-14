@@ -18,6 +18,7 @@
 #include <signal.h>
 
 #include <errno.h>
+#include "wfey_hwmon.h"
 
 #define NYI { fprintf(stderr, "%s: %d: NYI\n", __func__, __LINE__); assert(0); }
 
@@ -280,6 +281,7 @@ _Static_assert(sizeof(union EventSignal)==CACHE_LINE_SIZE,
 struct EventProcessor {
   union EventSignal eventSignal;
   int id;
+  FILE *energy_file;
   pthread_t tid;
   volatile sig_atomic_t end_flag;
 };
@@ -324,21 +326,21 @@ epThread(void *arg)
   
   
 #if WITHPERF == 2
-  ts_t active_cycle_start;
-  ts_t active_cycle_end;
+  ts_t active_time_start;
+  ts_t active_time_end;
     
-  ts_t inactive_cycle_start;
-  ts_t inactive_cycle_end;
+  ts_t inactive_time_start;
+  ts_t inactive_time_end;
   
 #ifdef BUSY_POLL
-  (void) inactive_cycle_start;
-  (void) inactive_cycle_end;
+  (void) inactive_time_start;
+  (void) inactive_time_end;
 #endif // BUSY_POLL
   
 #endif // WITHPERF 2
 
-  uint64_t active_cycle_total = 0.0;
-  uint64_t inactive_cycle_total = 0.0;
+  uint64_t active_time_total = 0.0;
+  uint64_t inactive_time_total = 0.0;
 
   /* ------- Setting up PERF counters ------- */
 
@@ -396,7 +398,7 @@ epThread(void *arg)
   pthread_barrier_wait(eparg->barrier);
 
 #if WITHPERF == 2
-  ts_now(&(active_cycle_start));
+  ts_now(&(active_time_start));
 #endif // WITHPERF 2
 
   // TODO above
@@ -408,19 +410,20 @@ epThread(void *arg)
     perror("enable");
   }
 #endif // WITHPERF 1
-  
+
+  start_energy = wfey_hwmon_joules_read(this->energy_file);
   while ( !this->end_flag ) {    
 #ifndef BUSY_POLL
 
 #if WITHPERF == 2
-    ts_now(&(inactive_cycle_start));
+    ts_now(&(inactive_time_start));
 #endif // WITHPERF 2
 
     WFE();
 
 #if WITHPERF == 2
-    ts_now(&(inactive_cycle_end));
-    inactive_cycle_total += ts_diff(inactive_cycle_start, inactive_cycle_end);
+    ts_now(&(inactive_time_end));
+    inactive_time_total += ts_diff(inactive_time_start, inactive_time_end);
 #endif // WITHPERF 2
     
 #ifdef USE_MONITOR
@@ -448,7 +451,8 @@ epThread(void *arg)
     }
   }
   // all done
-
+  end_energy = wfey_hwmon_joules_read(this->energy_file);
+  
 #if WITHPERF >= 1
   // Stop perf counters
   rc = ioctl(pe_fd[0], PERF_EVENT_IOC_DISABLE, PERF_IOC_FLAG_GROUP);
@@ -458,9 +462,9 @@ epThread(void *arg)
 #endif // WITHPERF >= 1
 
 #if WITHPERF == 2
-  ts_now(&(active_cycle_end));
+  ts_now(&(active_time_end));
 
-  active_cycle_total = ts_diff(active_cycle_start, active_cycle_end);
+  active_time_total = ts_diff(active_time_start, active_time_end);
 #endif // WITHPERF 2
 
 #if WITHPERF >= 1
@@ -487,7 +491,7 @@ epThread(void *arg)
 	  __FUNCTION__, this, id, eparg->cpu, 				\
 	  start_energy, end_energy, (end_energy-start_energy),		\
 	  wakeups, spurious, events,					\
-	  active_cycle_total, inactive_cycle_total, active_cycle_total-inactive_cycle_total, \
+	  active_time_total, inactive_time_total, active_time_total-inactive_time_total, \
 	  pe_val[0], pe_val[1]);
 
 #if WITHPERF >= 1
@@ -599,6 +603,7 @@ static inline void getCPUInfo( uint64_t  *cps, uint64_t *socks ) {
   *socks = atoi(temp);
 }
 
+
 int
 main(int argc, char **argv)
 {
@@ -635,7 +640,6 @@ main(int argc, char **argv)
   sigact.sa_flags = SA_SIGINFO;   // not including SA_RESTART bc dont want WFE/SLEEP to continue 
   sigaction(SIGUSR1, &sigact, &old_sigact);
   
-  
   /* ------- Init Event Processor ------- */
   // initalize event processor (only one right now)
   ep.id        = id; id++;
@@ -646,7 +650,7 @@ main(int argc, char **argv)
   eparg.ep->end_flag = 0;
   eparg.barrier     = &epbarrier;
   eparg.cpu         = EVENT_CPU_ID; //atoi(argv[2]);
-
+  eparg.ep->energy_file = wfey_hwmon_joules_fopen(eparg.cpu);
 
   /* ------- Init Sources ------- */
   Num_Sources = atoi(argv[3]);   // create sources but don't start them
