@@ -2,7 +2,7 @@ O:=0
 CFLAGS += -g -O${O} -std=gnu99 -MD -MP -Wall -Werror
 clinesize=$(shell cat /sys/devices/system/cpu/cpu0/cache/*/coherency_line_size | head -1)
 CFLAGS += -D COHERENCY_LINE_SIZE=${clinesize} 
-TARGETS = busypoll_nodb_wfey busypoll_db_wfey wfe_nodb_wfey wfe_db_nomon_wfey wfe_db_mon_wfey
+TARGETS = busypoll_nodb_wfey busypoll_db_wfey wfe_nodb_wfey wfe_db_nomon_wfey wfe_db_mon_wfey hwmon_test_wfey
 .PHONY: clean
 
 all: ${TARGETS}
@@ -35,6 +35,9 @@ wfe_db_mon_wfey: wfe_db_mon_wfey.o
 	${CC} ${CFLAGS} -o $@ $^ -lpthread
 wfe_db_mon_wfey.o: wfey.c
 	${CC} ${CFLAGS} -c -DUSE_DOORBELL -DUSE_MONITOR -o $@ wfey.c 
+
+hwmon_test_wfey: wfey_hwmon.c wfey_hwmon.h
+	${CC} -D __STAND_ALONE__ ${CFLAGS} -o $@ $^
 
 clean:
 	rm -f $(wildcard *.o *.d ${TARGETS})
