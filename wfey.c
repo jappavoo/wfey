@@ -342,12 +342,12 @@ epThread(void *arg)
 
   /* ------- Setting up PERF counters ------- */
 
-  int rc;
   
   uint64_t pe_val[TOTAL_PERF_EVENTS];            // Counter value array corresponding to fd/id array.
   memset(pe_val, 0, sizeof(pe_val));
   
 #if WITHPERF >= 1
+  int rc;
   uint64_t pe_fd[TOTAL_PERF_EVENTS];                  // pe_fd[0] will be the group leader file descriptor
   uint64_t pe_id[TOTAL_PERF_EVENTS];                  // event pe_ids for file descriptors
   struct perf_event_attr pe[TOTAL_PERF_EVENTS];  // Configuration structure for perf events 
