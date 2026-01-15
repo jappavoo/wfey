@@ -65,7 +65,7 @@ typedef struct timespec ts_t;
 
 // Sources Random Delay
 #define DELAYADD (10) // max percentage of delay to +- delay
-#define SECTORUN (5.0)
+#define SECTORUN (30.0)
 #define TIMETORUN (SECTORUN*USEC_IN_SECOND)
 
 #define TOTAL_PERF_EVENTS 2
