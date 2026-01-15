@@ -54,3 +54,4 @@ dkms.conf
 
 *~
 .ipynb_checkpoints
+venv/
