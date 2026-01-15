@@ -487,12 +487,12 @@ epThread(void *arg)
 
   start_energy = (double)start_energy/USEC_IN_SECOND;
   end_energy = (double)end_energy/USEC_IN_SECOND;
-  fprintf(stderr, "%s=%p, ID=%d, Core=%d, "				\
-	  "Start Energy=%f, End Energy=%f, Energy Diff=%f, " \
+  fprintf(stderr, "%s=%p, ID=%d, Core=%d, TimeRan=%f, "			\
+	  "Start Energy=%f, End Energy=%f, Energy Diff=%f, "		\
 	  "Total Wakeups=%ld, Spurious Wakeups=%ld, Events=%ld, "	\
 	  "Active Cycles=%ld, Inactive Cycles=%ld, Cycle Diff=%ld, "	\
 	  "CPU Cycles=%"PRIu64", Instructions Retired=%"PRIu64"\n",	\
-	  __FUNCTION__, this, id, eparg->cpu, 				\
+	  __FUNCTION__, this, id, eparg->cpu, SECTORUN,			\
 	  start_energy, end_energy, (end_energy-start_energy),		\
 	  wakeups, spurious, events,					\
 	  active_time_total, inactive_time_total, active_time_total-inactive_time_total, \

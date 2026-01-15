@@ -11,7 +11,7 @@ source ${SCRIPTDIR}/module_env.sh
 BM_ENERGY=1
 
 ## Name of experiment folder -- (all stored in parent folder 'logs') ##
-LOGS="test"
+LOGS="logs"
 PRETESTPATH="logs/$LOGS/pretest/"
 
 ## How many times to run experiment ##
