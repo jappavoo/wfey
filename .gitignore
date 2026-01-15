@@ -55,3 +55,6 @@ dkms.conf
 *~
 .ipynb_checkpoints
 venv/
+df/
+pw.txt
+tmp.txt
