@@ -1,9 +1,9 @@
 #!/bin/bash
 
-prog=${1:-wfe}
-wsev=${2:-nosev}
-sleep=${3:-1}
-repeat=${4:-10}
+prog=${1:-wfe} # program to run -- wfe, sleep, busy
+wsev=${2:-nosev} # whether or not sev should be looping in background
+sleep=${3:-1} # how long to sleep for while program runs
+repeat=${4:-10} # how many times the experiement should repeat -- every run will output
 
 [ -e ${prog}_${wsev}.txt ] && rm -- ${prog}_${wsev}.txt
 
@@ -18,5 +18,6 @@ do
     sensors -u altra_hwmon-isa-0000 | grep -E 'gy14' >> ${prog}_${wsev}.txt
 done
 
+# Output will be J per sec -- W
 echo $prog $wsev: wait time = ${sleep}
 ./sub.sh $sleep < ${prog}_${wsev}.txt
