@@ -45,8 +45,9 @@ rate and macro `DELAYADD`
 - *DELAYADD* is the max percentage of variance to the delay between
   events
   
-***NOTE:*** The number of event processors is currently fixed at 1  
-*I believe we can start to increase this with no side-effects but I
+> [!NOTE] 
+> The number of event processors is currently fixed at 1  
+>> *I believe we can start to increase this with no side-effects but I
   haven't tested that yet* 
 
 ---
@@ -74,11 +75,6 @@ rate and macro `DELAYADD`
 	need to be known by the event source but the event processor must
     know when it is triggered anyways
 - [ ] Make more work type scenarios instead of just null work
-
-[^1] WITHPERF Specifications  
-= 0 & no performance values  
-= 1 & only PERF events  
-= 2 & PERF events and acitive/inactive timing
 
 
 ### wfey_hwmon
@@ -109,7 +105,7 @@ Tells you:
   - this is called in `run_wfey.sh`
   - this file should have:
 	- which energy script is being used
-	- the energy type[^2] 
+	- the energy type[^2]
 	- how much sleep time to pad at the end of a test for the energy
 	numbers to reach their peak
 	- how much sleep time to pad between tests to reset the energy
@@ -138,17 +134,6 @@ and gathers data as specified by `ENERGYSCRIPT`, `ENERGYTYPE`, and
 - [ ] change *BM_ENERGY* to be flipped  
   - e.g. if the variable is defined that means we want energy to be gathered by the scriptsoutside the benchmark 
 
-[^2] this dictate how cleanup occurs  
-[^3] this itself might cause interference and data skew even if on its
-own separate core or it will not be a clear and tight representation
-of the energy expended in an event processor core  
-[^4] data from `/sys/class/hwmon/hwmon<n>/power1_input` is the total
-energy output in $\mu$W -- therefore it is the rate of energy consumed
-at any given moment  
-[^5] data from `sensors altra_hwmon-isa-0000` is a per-core cumulative
-joules consumed -- therefore we can get the total energy consumed on
-specific cores throughout the course of a run  
-
 ### notebooks
 
 `SetUp.py`:
@@ -170,9 +155,9 @@ specific cores throughout the course of a run
 - 
 
 > How to View Notebook diffs:  
-> Currently using
-> [nbdime](https://nbdime.readthedocs.io/en/latest/installing.html)  
-> To activate on notebooks `nbdime extensions --enable`
+>> Currently using
+>> [nbdime](https://nbdime.readthedocs.io/en/latest/installing.html)  
+>> To activate on notebooks `nbdime extensions --enable`
 
 
 *TODO:*
@@ -194,3 +179,22 @@ The goal of this script was to validate the energy differences between
     background
   - Automate runner script to sweep
   - Create basic plotter for data
+
+[^1]: WITHPERF Specifications  
+	= 0 & no performance values  
+	= 1 & only PERF events  
+	= 2 & PERF events and acitive/inactive timing
+	
+[^2]: this dictate how cleanup occurs
+
+[^3]: this itself might cause interference and data skew even if on
+	its own separate core or it will not be a clear and tight
+	representation of the energy expended in an event processor core
+	
+[^4]: data from `/sys/class/hwmon/hwmon<n>/power1_input` is the total
+	energy output in $\mu$W -- therefore it is the rate of energy
+	consumed at any given moment  
+
+[^5]: data from `sensors altra_hwmon-isa-0000` is a per-core
+	cumulative joules consumed -- therefore we can get the total
+	energy consumed on specific cores throughout the course of a run
