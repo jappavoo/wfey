@@ -7,7 +7,8 @@ source ${SCRIPTDIR}/module_env.sh
 ## Uncomment if you want the energy numbers to be gathered
 #  in the benchmark per epThread
 #  If commented out -- energy gathering will depend on what
-#  energy script is being used
+#  energy script is being used and will happen through the
+#  duration of the benchmark
 BM_ENERGY=1
 
 ## Name of experiment folder -- (all stored in parent folder 'logs') ##
