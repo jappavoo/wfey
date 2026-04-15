@@ -1,4 +1,5 @@
 #!/bin/bash
+#set -x
 
 ###export SSH_ASKPASS=./pw.sh
 ###export SSH_ASKPASS_REQUIRE=force
@@ -33,7 +34,7 @@ info () {
     echo -e "\t This corresponds to the deviceID you are reading from"
     echo "DEV -- Set automatically based on the PDU you are reading from"
     echo "OUT -- The outlet you want to read from"
-    echo -e "\t Current options: abeast1-sesa (25), don-sesa (30)"
+    echo -e "\t Current options: abeast1-sesa (1), don-sesa (0)"
     echo "MES -- If you want to get specfic measurement"
     echo -e "\t Current options: [Skip = 0, apparentPower = 1, current = 2, realPower = 3, currentCrestFactor = 4, voltage = 5, energy = 6, powerFactor= 7]"
     echo "NUM -- If you want only the number, let it be so. 1=on 0=off"
@@ -89,7 +90,7 @@ decodeMeasurement() {
     index=$1
     case $index in 
 	'0') 
-	    MES=""
+	    MES=0
 	    ;;
 	'1') 
 	    MES=$apparentPower
@@ -117,7 +118,7 @@ decodeMeasurement() {
 
 setMeasurement() {
     while true; do
-	read -n1 -p "If you would like to read a specific measurement, you can specify here, or you can skip this step [Skip = 0, apparentPower= 1, current = 2, realPower = 3, currentCrestFactor = 4, voltage = 5, energy = 6, powerFactor= 7]" ANS
+	read -n1 -p "If you would like to read a specific measurement, you can specify here, or you can skip this step [Skip = 0, apparentPower= 1, current = 2, realPower = 3, currentCrestFactor = 4, voltage = 5, energy = 6, powerFactor= 7] " ANS
 	case $ANS in 
 	    'h')
 		info
@@ -144,7 +145,11 @@ setNum() {
 	    '0') 
 		NUM=0
 		break;;
-	    '1') 
+	    '1')
+		if [ "$MES" -eq 0 ]; then
+		    echo "Cannot show only value when measurement not specified"
+		    exit -1
+		fi
 		NUM=1
 		break;;
 	    'h')
@@ -159,7 +164,7 @@ setNum() {
 }
 
 setLoop() {
-    read -p "How many times would you like to gather this data" LOOP
+    read -n1 -p "How many times would you like to gather this data " LOOP
     echo -e "\nLoop value: $LOOP"
 }
 
@@ -176,11 +181,12 @@ setVars () {
 argParse() {
     #echo "$1 $2 $3 $4 $5"
     LOOP=$1
+
     PDULoc=$2
-    if [[ "$PDULoc" -eq "left" ]]; then
+    if [[ "$PDULoc" -eq 0 ]]; then
 	PDU=$leftPDU
 	DEV=$leftDEV
-    elif [[ "$PDULoc" = "right" ]]; then
+    elif [[ "$PDULoc" -eq 1 ]]; then
 	PDU=$rightPDU
 	DEV=$rightDEV
     else
@@ -188,19 +194,28 @@ argParse() {
 	info
 	exit -1
     fi
-    OUT=$3
+    
+    OUT_ARG=$3
 
-    if [[ "$OUT" -ne $donOUTLET && "$OUT" -ne $beastOUTLET ]]; then
+    if [[ "$OUT_ARG" -eq 0 ]]; then
+	OUT=$donOUTLET
+    elif [[ "$OUT_ARG" -eq 1 ]]; then
+	OUT=$beastOUTLET
+    else
 	echo "Invalid outlet"
 	info
 	exit -1
     fi
     
     decodeMeasurement $4
-    NUM=$5
+    
+    if [ "$MES" -ne 0 ]; then # cannot get only value is not specific measurement
+	NUM=$5
+    else
+	NUM=0
+    fi
 }
 
-echo $#
 if [ "$#" -eq 0 ]; then
     echo "Tutorial mode"
     setVars
@@ -219,5 +234,10 @@ DATE=$(date '+%H%M%S')
 
 ./PDUcmds.exp $PASSWORD $LOOP $PDU $DEV $OUT $MES $NUM > tmp.txt
 #echo "file :'${LOOP}_${PDU}_${DEV}_${OUT}_${MES}_${NUM}_${DATE}.pdu'"
-cat tmp.txt | grep -E '^[0-9\.]+' > ./output/${LOOP}_${PDU}_${DEV}_${OUT}_${MES}_${NUM}_${DATE}.pdu
+if [ "$NUM" -eq 0 ]; then
+    cat tmp.txt | grep -A 1 -E 'type:' > ./output/${LOOP}_${PDU}_${DEV}_${OUT}_${MES}_${NUM}_${DATE}.pdu
+else
+    cat tmp.txt | grep -E '^[0-9\.]+' > ./output/${LOOP}_${PDU}_${DEV}_${OUT}_${MES}_${NUM}_${DATE}.pdu
+fi    
+rm tmp.txt
 

@@ -13,7 +13,7 @@ set OUT [lindex $argv 4];
 set MES [lindex $argv 5]; # if this value is set, measurementOP no longer NOP
 set NUM [lindex $argv 6]; # if this is set -- send it 'value' as last argument
 
-if {$MES != ""} {set measurementOP "measurement"}
+if {$MES eq 0} {set measurementOP ""} else {set measurementOP $MES}
 if {$NUM eq 1} {set valueOP "value"}
 
 spawn ssh $USER@$PDU
@@ -22,10 +22,9 @@ send -- "$PWD\r"
 
 for {set i 0} {$i < $LOOP} {incr i 1} {
     expect "$USER > "
-    send -- "get dev $DEV outlet $OUT $measurementOP $MES $valueOP\r"
+    send -- "get dev $DEV outlet $OUT measurement $measurementOP $valueOP\r"
 }
 
 expect "$USER > "
 send -- "exit\r"
 expect eof
-
