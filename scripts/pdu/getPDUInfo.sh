@@ -3,11 +3,13 @@
 
 ###export SSH_ASKPASS=./pw.sh
 ###export SSH_ASKPASS_REQUIRE=force
+PDU_DIR=$(dirname -- "$BASH_SOURCE")
 
+LOCAL=0 # If local is 1 then should work in current directory, else output to stdout
 OUTPUTDIR="output"
-mkdir -p $OUTPUTDIR
+mkdir -p $PDU_DIR/$OUTPUTDIR
 
-PASSWORD=$(cat ./pw.txt)
+PASSWORD=$(cat $PDU_DIR/pw.txt)
 
 leftPDU="10.89.19.16"
 rightPDU="10.89.19.17"
@@ -228,16 +230,25 @@ else
     argParse $1 $2 $3 $4 $5
 fi
 
-echo "./PDUcmds.exp $PASSWORD $LOOP $PDU $DEV $OUT $MES $NUM"
+#echo "./PDUcmds.exp $PASSWORD $LOOP $PDU $DEV $OUT $MES $NUM"
 
 DATE=$(date '+%H%M%S')
 
-./PDUcmds.exp $PASSWORD $LOOP $PDU $DEV $OUT $MES $NUM > tmp.txt
+${PDU_DIR}/PDUcmds.exp $PASSWORD $LOOP $PDU $DEV $OUT $MES $NUM > tmp.txt
+
 #echo "file :'${LOOP}_${PDU}_${DEV}_${OUT}_${MES}_${NUM}_${DATE}.pdu'"
 if [ "$NUM" -eq 0 ]; then
-    cat tmp.txt | grep -A 1 -E 'type:' > ./output/${LOOP}_${PDU}_${DEV}_${OUT}_${MES}_${NUM}_${DATE}.pdu
+    cat tmp.txt | grep -A 1 -E 'type:' > edited_tmp.txt
+    # ./${OUTPUTDIR}/${LOOP}_${PDU}_${DEV}_${OUT}_${MES}_${NUM}_${DATE}.pdu
 else
-    cat tmp.txt | grep -E '^[0-9\.]+' > ./output/${LOOP}_${PDU}_${DEV}_${OUT}_${MES}_${NUM}_${DATE}.pdu
-fi    
-rm tmp.txt
+    cat tmp.txt | grep -E '^[0-9\.]+' > edited_tmp.txt
+fi
+
+if [ "$LOCAL" -eq 1 ]; then
+    cat edited_tmp.txt > ./${OUTPUTDIR}/${LOOP}_${PDU}_${DEV}_${OUT}_${MES}_${NUM}_${DATE}.pdu
+else
+    cat edited_tmp.txt
+fi
+
+rm tmp.txt edited_tmp.txt
 

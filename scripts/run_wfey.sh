@@ -36,7 +36,7 @@ fi
 mkdir -p $LOGPATH
 
 
-if [[ -z "$BM_ENERGY" ]]; then
+if [[ -z "$BG_TASK" ]]; then
     # --------- Run ENERGY SCRIPT --------- #
     ## This script should contain a function called 'powerLog' which should
     ## take in the Path and the Data args to create a file '$LOGPATH/hwmon-${LOGDATE}.out'
@@ -53,7 +53,7 @@ fi
 
 ./$@ 1> $LOGPATH/latency-${LOGDATE}.out 2> $LOGPATH/wfey-${LOGDATE}.out
 
-if [[ -z "$BM_ENERGY" ]]; then
+if [[ -z "$BG_TASK" ]]; then
     sleep ${SLEEP_TO_FINISH} # Power numbers from hwmon continue to go up a little after the wfey code is done
 
     echo "energy type is" $ENERGYTYPE

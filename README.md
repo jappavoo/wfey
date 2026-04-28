@@ -9,7 +9,7 @@ explorations in waiting for events
 Create the virt env with all the required packages for the notebooks
 ```console
 python -m venv venv
-source /venv/bin/activate
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 > If you install a new required package you can update
@@ -22,6 +22,8 @@ You are expected to have:
 - A file `wfey/scripts/pdu/pw.sh` that contains your password in plain
   text
 - `expect` package to be able to code to the pdu
+- Must create an ssh connection with the racks at least once prior to
+  running an experiment
 
 ## How This Works
 
@@ -110,29 +112,59 @@ Tells you:
 	numbers to reach their peak
 	- how much sleep time to pad between tests to reset the energy
 	numbers 
-- `BM_ENERGY` is set when you want constant energy numbers to be
+- `BG_TASK` is set when you want constant energy numbers to be
 gathered during the execution of the benchmark[^3]
 
 `run_wfey.sh` -- creates the proper data folder, runs the benchmark,
 and gathers data as specified by `ENERGYSCRIPT`, `ENERGYTYPE`, and
-`BM_ENERGY` 
+`BG_TASK` 
 - if `ENERGYTYPE` is `nomod`: the `ENERGYSCRIPT` will gather
   across-all-cores data periodically using the built-in hardware
   monitors[^4]
 - if `ENERGYTYPE` is `wmod`: the `ENERGYSCRIPT` will gather gather per
   core data before and after the benchmark finishes executing[^5]
   - **NOTE:** Nothing assumes this mod is loaded
+- **NOTE:** Truly to only difference between `nomod` and `wmod` is
+that `nomod` expects a task to be running in the background to kill,
+while `wmod` calls a cleanup function after the benchmark finishes
+	- This term in now overloaded for other background tasks such as
+      PDU energy gathering
 
-> PDU
->> ***WIP*** -- scripts to gather rack level energy numbers
->> functionally works but not integrated into the other scripts
->> would be fun sidequest if time allows
+#### PDU
+These scripts gather rack level energy numbers
+> Values you can gather:
+>> - Apparent Power (VA)
+>> - Current (A)
+>> - Real power (W)
+>> - Current Crest Factor
+>> - Voltage (Vrms)
+>> - Energy (kWh)
+>> - Power Factor (%)
+[NOTE:] PDU script required the expect intepreter and for you to have created a
+connection with the racks at least once prior
 
+[NOTE:] This functionality currently only work on `Don` and `Beast`
+
+`getPDUInfo.sh` -- allows you to get power measurements from a set of
+2 PDU's for two devices, `Don` and `Beast`
+- You have the option of running with no arg to go through a tutorial
+  mode, which will guide you through the possible inputs that
+  configure where and what type of data is gathered and how it is
+  displayed
+- You can request all the values or just one of them
+  - You can show just the value or the value with its label ( iaof you
+    are only looking at one measurement )
+- args -- `./getPDUInfo.sh <num_loops> <pdu> <outlet> <measurement> <num?>`
+  - for more information look at the script
+	
+`PDUcmds.exp`
+- Called from `getPDUInfo.sh` and sends values to PDU devices
 
 *TODO:*
 - [ ] integrate pdu energy measuring scripts
-- [ ] change *BM_ENERGY* to be flipped  
-  - e.g. if the variable is defined that means we want energy to be gathered by the scriptsoutside the benchmark 
+  - [ ] add argument for runner script that takes in file name for
+        output if needed
+- [ ] find more detailed information on what the energy values represent
 
 ### notebooks
 

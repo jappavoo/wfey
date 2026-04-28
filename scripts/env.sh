@@ -2,21 +2,22 @@ SCRIPTDIR=$(dirname -- "$BASH_SOURCE")
 
 ## MetaVars -- Per Machine/Test ##
 #source ${SCRIPTDIR}/no_module_env.sh
-source ${SCRIPTDIR}/module_env.sh
+#source ${SCRIPTDIR}/module_env.sh
+source ${SCRIPTDIR}/pdu_env.sh
 
-## Uncomment if you want the energy numbers to be gathered
-#  in the benchmark per epThread
-#  If commented out -- energy gathering will depend on what
-#  energy script is being used and will happen through the
-#  duration of the benchmark
-BM_ENERGY=1
+##  If commented out -- energy gathering will happen in the background
+#  depending on what ENERGYSCRIPT is declared in above env file
+## If Uncommented --  energy numbers are only gathered in the
+#  benchmark (per epThread)
+## For more specifics looks into the readme
+BG_TASK=1
 
 ## Name of experiment folder -- (all stored in parent folder 'logs') ##
-LOGS="logs"
+LOGS="pdu_testing"
 PRETESTPATH="logs/$LOGS/pretest/"
 
 ## How many times to run experiment ##
-times_to_run=3
+times_to_run=1
 
 ## What CPU should all scripts run on ##
 # Note: this should be the same in the benchmark as well (not automated)
