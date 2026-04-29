@@ -25,6 +25,21 @@ You are expected to have:
 - Must create an ssh connection with the racks at least once prior to
   running an experiment
 
+### How to Run
+
+1. Source `env.sh` to get access to environment variable `runnercpu`
+2. Taskset the test runner script to `runnercpu` then run the script
+   `full_run.sh`
+   ```
+   taskset -c $runnercpu ./scripts/full_run.sh
+   ```
+
+*TODO:*
+- [ ] Move all the meta scripts onto core 0 instead since that is the
+      busiest core ( this needs to propagate to the bm )
+- [ ] Create an sourceable script that has all the needed variables to
+      be able to create a quick run from the cmd line
+
 ## How This Works
 
 ### Makefile
@@ -113,7 +128,7 @@ Tells you:
 	- how much sleep time to pad between tests to reset the energy
 	numbers 
 - `BG_TASK` is set when you want constant energy numbers to be
-gathered during the execution of the benchmark[^3]
+gathered in the background during the execution of the benchmark[^3]
 
 `run_wfey.sh` -- creates the proper data folder, runs the benchmark,
 and gathers data as specified by `ENERGYSCRIPT`, `ENERGYTYPE`, and
@@ -161,9 +176,8 @@ connection with the racks at least once prior
 - Called from `getPDUInfo.sh` and sends values to PDU devices
 
 *TODO:*
-- [ ] integrate pdu energy measuring scripts
-  - [ ] add argument for runner script that takes in file name for
-        output if needed
+- [X] integrate pdu energy measuring scripts
+- [ ] add graphing and data analysis for the pdu output
 - [ ] find more detailed information on what the energy values represent
 
 ### notebooks

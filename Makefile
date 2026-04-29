@@ -42,4 +42,4 @@ hwmon_test_wfey: wfey_hwmon.c wfey_hwmon.h
 	${CC} -D __STAND_ALONE__ ${CFLAGS} -o $@ $^
 
 clean:
-	rm -f $(wildcard *.o *.d ${TARGETS})
+	rm -f $(wildcard *~ *.o *.d *.out ${TARGETS})
