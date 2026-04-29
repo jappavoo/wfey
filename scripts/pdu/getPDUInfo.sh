@@ -219,36 +219,36 @@ argParse() {
 }
 
 if [ "$#" -eq 0 ]; then
-    echo "Tutorial mode"
+    #echo "Tutorial mode"
     setVars
 elif [ "$#" -le 2 ]; then  # Need at least LOOP, PDU, and OUT
     echo "Not enough parameters"
     info
     exit -1
 else
-    echo "Expert Mode"
+    #echo "Expert Mode"
     argParse $1 $2 $3 $4 $5
 fi
 
 #echo "./PDUcmds.exp $PASSWORD $LOOP $PDU $DEV $OUT $MES $NUM"
 
-DATE=$(date '+%H%M%S')
+DATE=$(date '+%H%M%S%N')
 
-${PDU_DIR}/PDUcmds.exp $PASSWORD $LOOP $PDU $DEV $OUT $MES $NUM > tmp.txt
+${PDU_DIR}/PDUcmds.exp $PASSWORD $LOOP $PDU $DEV $OUT $MES $NUM > tmp${DATE}.txt
 
 #echo "file :'${LOOP}_${PDU}_${DEV}_${OUT}_${MES}_${NUM}_${DATE}.pdu'"
 if [ "$NUM" -eq 0 ]; then
-    cat tmp.txt | grep -A 1 -E 'type:' > edited_tmp.txt
+    cat tmp${DATE}.txt | grep -s -A 1 -E 'type:' > edited_tmp${DATE}.txt
     # ./${OUTPUTDIR}/${LOOP}_${PDU}_${DEV}_${OUT}_${MES}_${NUM}_${DATE}.pdu
 else
-    cat tmp.txt | grep -E '^[0-9\.]+' > edited_tmp.txt
+    cat tmp${DATE}.txt | grep -s -E '^[0-9\.]+' > edited_tmp${DATE}.txt
 fi
 
 if [ "$LOCAL" -eq 1 ]; then
-    cat edited_tmp.txt > ./${OUTPUTDIR}/${LOOP}_${PDU}_${DEV}_${OUT}_${MES}_${NUM}_${DATE}.pdu
+    cat edited_tmp${DATE}.txt > ./${OUTPUTDIR}/${LOOP}_${PDU}_${DEV}_${OUT}_${MES}_${NUM}_${DATE}.pdu
 else
-    cat edited_tmp.txt
+    cat edited_tmp${DATE}.txt
 fi
 
-rm tmp.txt edited_tmp.txt
+rm tmp${DATE}.txt edited_tmp${DATE}.txt
 

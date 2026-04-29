@@ -5,9 +5,9 @@ SCRIPTDIR=$(dirname -- "$BASH_SOURCE")
 #source ${SCRIPTDIR}/module_env.sh
 source ${SCRIPTDIR}/pdu_env.sh
 
-##  If commented out -- energy gathering will happen in the background
+##  If uncommented -- energy gathering will happen in the background
 #  depending on what ENERGYSCRIPT is declared in above env file
-## If Uncommented --  energy numbers are only gathered in the
+## If commented --  energy numbers are only gathered in the
 #  benchmark (per epThread)
 ## For more specifics looks into the readme
 BG_TASK=1
