@@ -3,11 +3,11 @@
 # --------- Run HWMON --------- #
 
 function powerLog() {
-    LOGPATH=$1
-    LOGDATE=$2
-    echo "hwmon0" > $LOGPATH/hwmon-${LOGDATE}.out
+    LOCALPATH=$1
+    LOCALDATE=$2
+    echo "hwmon0" > $LOCALPATH/hwmon-${LOCALDATE}.out
     while sleep 0.5; do
-	echo $(cat /sys/class/hwmon/hwmon0/power1_input) >> $LOGPATH/hwmon-${LOGDATE}.out
+	echo $(cat /sys/class/hwmon/hwmon0/power1_input) >> $LOCALPATH/hwmon-${LOCALDATE}.out
     done
 }
 
