@@ -147,14 +147,20 @@ while `wmod` calls a cleanup function after the benchmark finishes
 
 #### PDU
 These scripts gather rack level energy numbers
-> Values you can gather:
->> - Apparent Power (VA)
->> - Current (A)
->> - Real power (W)
->> - Current Crest Factor
->> - Voltage (Vrms)
->> - Energy (kWh)
->> - Power Factor (%)
+
+Values you can gather:
+
+|        Value         | Description                                                                                                                        |
+|:--------------------:|------------------------------------------------------------------------------------------------------------------------------------|
+| Apparent Power (VA)  | The product of voltage multiplied by current                                                                                       |
+|     Current (A)      | The flow rate of electric charge                                                                                                   |
+|    Real Power (W)    | ? Maybe active power ? the word done by an IT device and measurement power companies bill for us                                   |
+| Current Crest Factor | The ratio between the instantaneous peak current required by the load and RMS current                                              |
+|    Voltage (Vrms)    | A fixed value for a circuit that measure electrical potentia;                                                                      |
+|     Energy (kWh)     | ? Accumulated active pwoer over 1 hour ?                                                                                           |
+|   Power Factor (%)   | the ratio of real power to the apparent power (lower than 100% indicates wasted power due to reactive power or harmonic distortion |
+
+---
 [NOTE:] PDU script required the expect intepreter and for you to have created a
 connection with the racks at least once prior
 
@@ -177,8 +183,18 @@ connection with the racks at least once prior
 
 *TODO:*
 - [X] integrate pdu energy measuring scripts
-- [ ] add graphing and data analysis for the pdu output
-- [ ] find more detailed information on what the energy values represent
+- [X] add graphing and data analysis for the pdu output
+- [X] find more detailed information on what the energy values represent
+
+*Useful Links:*
+
+[Vertiv Power Definition and
+Terms](https://www.vertiv.com/en-us/support/faqs/power-distribution/power-definitions-and-terms/)
+
+[General PDU Power
+Metrics](https://www.raritan.com/landing/rack-pdu-power-quality-white-paper/thanks)
+
+
 
 ### notebooks
 
