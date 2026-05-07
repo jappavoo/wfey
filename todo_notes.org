@@ -1,0 +1,51 @@
+|----------+--------------------------+-----------------------------------------------------------------------------|
+| Configs  | Subconfigs               | Notes                                                                       |
+|----------+--------------------------+-----------------------------------------------------------------------------|
+| Busypoll | No Doorbell              | Loops through entire source list every loop                                 |
+|          | Doorbell                 | Check on doorbell to see if event sent before going through source list     |
+|          |                          |                                                                             |
+| WFE      | No Doorbell              | Every wake-up of WFE loops through the source list                          |
+|          | Doorbell -- no monitor   | Spurious wakeup of WFE check doorbell before looking through source list    |
+|          |                          | Sources trigger doorbell through SEV                                        |
+|          | Doorbell -- with monitor | Same as above except sources trigger doorbell through use of global montior |
+|----------+--------------------------+-----------------------------------------------------------------------------|
+
+
+|------------+---------------------------------------------------------------------|
+| SW Configs | Notes                                                               |
+|------------+---------------------------------------------------------------------|
+| Doorbell   | All done! Main purpose is instead of interating through entire list |
+|            | of possible event sources, checks on doorbell instead to separate   |
+|            | spurious wakeups from proper ones                                   |
+|            |                                                                     |
+| Mailbox    | In progress ... This is similar to doorbell as there is an address  |
+|            | to monitor to wake for an event source to come in but this time     |
+|            | there is a message involved -- this message can maybe be per event  |
+|            | source or perhaps one message active at a time                      |
+|            |                                                                     |
+| Tripwire   | Still just a thought ... I beleive there needs to be an outside     |
+|            | address that the source write to that it knows and has access too   |
+|            | without intervention, and the event processor needs to know how to  |
+|            | access this address to be able to trigger a wakeup                  |
+|------------+---------------------------------------------------------------------|
+
+|--------------------------------------------------+------------------------------------------------------------------------|
+| Misc TODO                                        | Notes                                                                  |
+|--------------------------------------------------+------------------------------------------------------------------------|
+| Move all workers off core 0                      | Currently the event processor runs on core zero and the runner scripts |
+|                                                  | run on the last core of the first socket -- but learned that core      |
+|                                                  | 0 is the busiest core so that should be where the runner script is     |
+|                                                  |                                                                        |
+| Change the way different worker cores are chosen | Want to take in a state vector that describes which cores to use       |
+|                                                  | for different types of workers                                         |
+|                                                  | NOTE: Would be interesting to see how a worker/processor on same       |
+|                                                  | watch would look like                                                  |
+|                                                  |                                                                        |
+| Increase the number of event processors          | Would like to do the above first but that might be a friction point    |
+|                                                  |                                                                        |
+| Make a larger variety of work types available    | Currently only have null work loop available, more hard working types  |
+|                                                  | would be good and maybe can be set by the source and involved in the   |
+|                                                  | mailbox? or perhaps multiple types of source loops for different types |
+|                                                  | of work                                                                |
+|--------------------------------------------------+------------------------------------------------------------------------|
+
