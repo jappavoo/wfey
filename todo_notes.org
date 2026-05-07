@@ -29,23 +29,36 @@
 |            | access this address to be able to trigger a wakeup                  |
 |------------+---------------------------------------------------------------------|
 
-|--------------------------------------------------+------------------------------------------------------------------------|
-| Misc TODO                                        | Notes                                                                  |
-|--------------------------------------------------+------------------------------------------------------------------------|
-| Move all workers off core 0                      | Currently the event processor runs on core zero and the runner scripts |
-|                                                  | run on the last core of the first socket -- but learned that core      |
-|                                                  | 0 is the busiest core so that should be where the runner script is     |
-|                                                  |                                                                        |
-| Change the way different worker cores are chosen | Want to take in a state vector that describes which cores to use       |
-|                                                  | for different types of workers                                         |
-|                                                  | NOTE: Would be interesting to see how a worker/processor on same       |
-|                                                  | watch would look like                                                  |
-|                                                  |                                                                        |
-| Increase the number of event processors          | Would like to do the above first but that might be a friction point    |
-|                                                  |                                                                        |
-| Make a larger variety of work types available    | Currently only have null work loop available, more hard working types  |
-|                                                  | would be good and maybe can be set by the source and involved in the   |
-|                                                  | mailbox? or perhaps multiple types of source loops for different types |
-|                                                  | of work                                                                |
-|--------------------------------------------------+------------------------------------------------------------------------|
+|------------------------------------------------------------+-------------------------------------------------------------------------|
+| Misc TODO                                                  | Notes                                                                   |
+|------------------------------------------------------------+-------------------------------------------------------------------------|
+| Move all workers off core 0                                | Currently the event processor runs on core zero and the runner scripts  |
+|                                                            | run on the last core of the first socket -- but learned that core       |
+|                                                            | 0 is the busiest core so that should be where the runner script is      |
+|                                                            |                                                                         |
+| Change the way different worker cores are chosen           | Want to take in a state vector that describes which cores to use        |
+|                                                            | for different types of workers                                          |
+|                                                            | NOTE: Would be interesting to see how a worker/processor on same        |
+|                                                            | watch would look like                                                   |
+|                                                            |                                                                         |
+| Increase the number of event processors                    | Would like to do the above first but that might be a friction point     |
+|                                                            |                                                                         |
+| Make a larger variety of work types available              | Currently only have null work loop available, more hard working types   |
+|                                                            | would be good and maybe can be set by the source and involved in the    |
+|                                                            | mailbox? or perhaps multiple types of source loops for different types  |
+|                                                            | of work                                                                 |
+|                                                            |                                                                         |
+| Basic tests for PDU values to verify accuracy of values    | Want to sanity check the output of the pdu with heavy load to make sure |
+|                                                            | we are able to see change from PDUs                                     |
+|                                                            |                                                                         |
+| Compare the values across our machines                     | We have access to Sabrina's machines + DGX's that are both arm machines |
+|                                                            | once we get the Intel comparison benchmark we can compare them to Don   |
+|                                                            |                                                                         |
+| Get Mwait comparison in the benchmark                      | See the benefits of WFE over Mwait                                      |
+|                                                            |                                                                         |
+| Run benchmark on as idle of a machine as possible          | See what the baseline energy readings are from single user mode or even |
+|                                                            | more stripped down than that                                            |
+|                                                            |                                                                         |
+| Integrate source loader into how event sources send events | This would give us more realisitic workloads                            |
+|------------------------------------------------------------+-------------------------------------------------------------------------|
 
