@@ -209,6 +209,9 @@ _Static_assert(sizeof(union Event)==CACHE_LINE_SIZE,
 
 typedef struct Source * source_t;
 void source_event_activate(source_t this)  {
+  // if already active then don't continue
+  // already processing an event
+  // relay this back to source so no signal sent
   ts_now(&(this->start_ts));
   __atomic_store_n(&(this->event.state), SRC_EVENT_ACTIVE,
 		   __ATOMIC_SEQ_CST);
@@ -220,19 +223,23 @@ bool source_event_isActive(source_t this)   {
 }
 
 void source_event_reset(source_t this) {
+  ts_now(&(this->end_ts));
+  // todo make local then add to log array per source
+  // this->log[i].start
+  // end if 0 if miss -- 
   __atomic_store_n(&(this->event.state), SRC_EVENT_RESET,
 		   __ATOMIC_SEQ_CST);
   // TODO there should probably~ be a lock involved here :p
   // min might be wrong! or this process can be really fast
   
-  if (source_event_isActive(this)) { // Give up if this is true
-    return;
-  }
+  /* if (source_event_isActive(this)) { // Give up if this is true */
+  /*   return; */
+  /* } */
   
-  ts_now(&(this->end_ts));
 
   uint64_t ns = ts_diff(this->start_ts, this->end_ts);
 
+  // become an assert TODO
   if ( (int64_t)ns <= 0 ) { // Give up again -- shenanigans occured
     return;
   }
