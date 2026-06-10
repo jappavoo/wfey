@@ -1,3 +1,4 @@
+#include <stddef.h>
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,198 +17,17 @@
 #include <sys/ioctl.h>
 #include <string.h>
 #include <signal.h>
+#include <sys/mman.h>
+#include <math.h>
+#include <fcntl.h>
 
-#include <errno.h>
-#include "wfey_hwmon.h"
+#include "include/wfey.h"
+#include "include/perf.h"
+#include "include/wfey_hwmon.h"
 
-#define NYI { fprintf(stderr, "%s: %d: NYI\n", __func__, __LINE__); assert(0); }
-
-//#define BUSY_POLL
-//#define USE_DOORBELL
-//#define USE_MONITOR
-
-//#define SOCKETSPLIT
 
 //#define VERBOSE
 
-// PERF ELIMINATION
-/* 0 = no performance values, 1 = only PERF events, 2 = PERF events and active/inactive timing */
-#define WITHPERF 2
-
-
-#define CLOCK_SOURCE CLOCK_MONOTONIC
-#define NSEC_IN_SECOND (1000000000)
-#define USEC_IN_SECOND (1000000)
-#define NULL_WORK_COUNT (10000)
-
-#ifdef COHERENCY_LINE_SIZE
-// passed at compile time 
-#define CACHE_LINE_SIZE COHERENCY_LINE_SIZE
-#else
-// hardcoded default
-#define CACHE_LINE_SIZE 64
-#error
-
-#endif
-
-#define USAGE "%s <events per sec> <event processor cpu> <# of source cpu>\n"
-
-// Idling Macros
-#define EVENT_CPU_ID 0
-#define NUM_EVENT_CPUS 1 // currently locked in at 1, but should be dynamic in the future
-#define META_THREAD 1 // just for clarity
-
-pthread_barrier_t endbarrier;
-pthread_barrier_t idlebarrier; // TODO remove when all instances removed
-
-// Time  handling code
-typedef struct timespec ts_t;
-
-// Sources Random Delay
-#define DELAYADD (10) // max percentage of delay to +- delay
-#define SECTORUN (30.0)
-#define TIMETORUN (SECTORUN*USEC_IN_SECOND)
-
-#define TOTAL_PERF_EVENTS 2
-
-struct read_format {
-  uint64_t nr;      // number of events
-  uint64_t time_enabled;
-  uint64_t time_running;
-  struct {
-    uint64_t value; // value of event
-    uint64_t id;
-    uint64_t lost;
-  } values[TOTAL_PERF_EVENTS];
-};
-
-[[maybe_unused]] static long
-perf_event_open(struct perf_event_attr *hw_event, pid_t pid,
-                int cpu, int group_fd, unsigned long flags)
-{
-  int ret;
-
-  ret = syscall(__NR_perf_event_open, hw_event, pid, cpu,
-		group_fd, flags);
-
-  if (ret == -1) {
-    fprintf(stderr, "Error creating event\n");
-    exit(EXIT_FAILURE);
-  }
-  
-  return ret;
-}
-
-void
-configure_perf_event(struct perf_event_attr *pe, uint32_t type, uint64_t config) {
-  memset(pe, 0, sizeof(struct perf_event_attr));
-  pe->type = type;                                         // type of event
-  pe->size = sizeof(struct perf_event_attr); 
-  pe->config = config;                                     // type specific config
-  pe->read_format = PERF_FORMAT_GROUP | PERF_FORMAT_ID | PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING | PERF_FORMAT_LOST;    // values returned in read
-  pe->disabled = 1;                                        // off by default
-  pe->exclude_kernel = 1;                                  // don't count kernel
-}
-
-// Signal Handler for End Signaling
-void empty_handler(int sig_no, siginfo_t* info, void *context){};
-
-static inline int
-ts_now(ts_t *now)
-{
-  if (clock_gettime(CLOCK_SOURCE, now) == -1) {
-    perror("clock_gettime");
-    NYI;
-    return 0;
-  }
-  return 1;
-}
-
-
-// Return the difference between the times in nanoseconds
-static inline uint64_t
-ts_diff(ts_t start, ts_t end)
-{
-  uint64_t diff=((end.tv_sec - start.tv_sec)*NSEC_IN_SECOND) + (end.tv_nsec - start.tv_nsec);
-  return diff;
-}
-
-static inline void
-SEV()
-{
-  asm volatile("sev \n\t");
-}
-
-static inline void
-WFE() 
-{
-  asm volatile("wfe \n\t");
-}
-
-static inline void
-WFI()
-{
-  asm volatile("wfi \n\t");
-}
-
-static inline uint64_t 
-armMonitor(volatile void *addr)
-{
-  uint64_t value;
-  asm volatile( "ldaxr %0, [%1]\n\t"
-		 : "=&r" (value) : "r" (&addr));
-  return value;
-}
-
-void
-pinCpu(int cpu, char *str)
-{
-  cpu_set_t  mask;
-  CPU_ZERO(&mask);
-
-  if (cpu == -1 ) {
-    cpu = sched_getcpu();
-    if (cpu == -1) {
-      err(1, "could not determine current cpu");
-    }
-  }
-
-  CPU_SET(cpu, &mask);
-  if (sched_setaffinity(0, sizeof(mask), &mask) != 0) {
-    err(1, "could not pin to cpu=%d",cpu);
-  }
-  
-#ifdef VERBOSE
-  fprintf(stderr, "%s: PINNED TO CPU: %d\n", str, cpu);
-#endif    
-}
-
-enum SourceEventState { SRC_EVENT_RESET=0, SRC_EVENT_ACTIVE=1 };
-union Event {
-  char padding[CACHE_LINE_SIZE];
-  volatile int state;
-};
-
-typedef struct EventProcessor * ep_t;
-
-struct Source {
-  ep_t ep;
-  double sleep;
-  int id;
-  pthread_t tid;
-  volatile sig_atomic_t end_flag;
-  ts_t start_ts;
-  ts_t end_ts;
-  uint64_t totalns;
-  uint64_t minns;
-  uint64_t maxns;
-  uint64_t count;
-  union Event event;
-};
-_Static_assert(sizeof(union Event)==CACHE_LINE_SIZE,
-	       "union eventdesc bad size");
-
-typedef struct Source * source_t;
 void source_event_activate(source_t this)  {
   // if already active then don't continue
   // already processing an event
@@ -255,46 +75,70 @@ void source_event_reset(source_t this) {
 #endif
 }
 
+static inline double compwork() {
+  int x, y;
+  int retval;
+  for (uint64_t i = 0; i < WORK_COUNT; i++) {
+    x = rand();
+    y = rand();
+    volatile double output_1 = 0.5 * (sin(x + y) - sin(x - y));
+    volatile double output_2 = cos(rand()) * sin(y);
 
-int            Num_Sources = 0;
-struct Source *Sources     = NULL;
-
-typedef volatile uint64_t doorbell_t;
-enum { DOORBELL_RESET=0, DOORBELL_PRESSED=1 };
-static inline doorbell_t doorbell_isPressedAndReset(doorbell_t *db)
-{
-  return __atomic_exchange_n(db, DOORBELL_RESET, __ATOMIC_SEQ_CST);
+    if ((output_1 == output_2) && (retval == 0)) {
+      retval = 1;
+    }
+  }
+  return retval;
 }
 
-static inline void doorbell_reset(doorbell_t *db)
-{
-  __atomic_store_n(db, DOORBELL_RESET, __ATOMIC_SEQ_CST);
+static inline void iowork() {
+  int fd, rand_fd;
+  char randomdata[50];
+  ssize_t datalen, result = 0;
+  
+  for (uint64_t i = 0; i < WORK_COUNT; i++) {
+    if ((fd = open("foo", O_TMPFILE | O_RDWR, S_IRUSR | S_IWUSR)) == -1) {
+      perror("opening memwork file failed");
+    }
+    if ((rand_fd = open("/dev/urandom", O_RDONLY)) == -1) {
+      perror("opening urandom failed");
+    }
+
+    while (datalen < sizeof(randomdata)) {
+      if ( (result = read(rand_fd, randomdata, sizeof(randomdata) - datalen)) == -1) {
+        perror("rand read failed");
+      } else {
+        datalen += result;
+      }
+    }
+    
+    datalen = 0;
+    while (datalen < sizeof(randomdata)) {
+      if ( (result = write(fd, randomdata, sizeof(randomdata) - datalen)) == -1) {
+        perror("rand write failed");
+      } else {	
+        datalen += result;
+      }
+    }
+
+    if (close(rand_fd) == -1) { perror("closing urandom failed"); }
+    if (close(fd) == -1) { perror("closing memwork file failed"); } 
+  }
 }
-
-static inline void doorbell_press(doorbell_t *db)
-{
-  __atomic_store_n(db, DOORBELL_PRESSED, __ATOMIC_SEQ_CST);
-}
-
-union EventSignal {
-  char       padding[CACHE_LINE_SIZE];
-#ifdef USE_DOORBELL
-  doorbell_t db;
-#endif
-};
-_Static_assert(sizeof(union EventSignal)==CACHE_LINE_SIZE,
-	       "union EventSignal bad size");
-
-struct EventProcessor {
-  union EventSignal eventSignal;
-  int id;
-  pthread_t tid;
-  volatile sig_atomic_t end_flag;
-};
 
 static inline void nullwork() {
-  for (uint64_t i=0; i<NULL_WORK_COUNT; i++) {
+  for (uint64_t i = 0; i < WORK_COUNT; i++) {
     asm volatile ("nop");
+  }
+}
+
+
+static inline void* choose_work() {
+  int wt = rand() % 100;
+  if (wt >= WORK_PERC) {
+    return &compwork;
+  } else {
+    return &memwork;
   }
 }
 
@@ -305,16 +149,10 @@ EP_handle_event(ep_t this, source_t src)
   fprintf(stderr, "%s: this=%p(%d) src=%p(%d)\n",
 	  __FUNCTION__, this, this->id, src, src->id);
 #endif
-  // working hard on the event ;-)
-  nullwork();
+  src->work_func();
   source_event_reset(src);
 }
 
-struct EPThreadArg {
-  ep_t  ep;
-  pthread_barrier_t *barrier;
-  int   cpu;
-};
   
 void *
 epThread(void *arg)
@@ -516,11 +354,6 @@ epThread(void *arg)
   return NULL;
 }
 
-struct SourceThreadArg {
-  source_t src;
-  int      cpu;
-  pthread_barrier_t *barrier;
-};
 
 void * sourceThread(void *arg) {
   struct SourceThreadArg *sarg = arg;
@@ -578,11 +411,6 @@ void * sourceThread(void *arg) {
 }
 
 
-struct IdleThreadArg {
-  int                cpu;
-  pthread_barrier_t  *barrier;
-};
-
 void * idleThread(void *arg) {
   struct IdleThreadArg *iarg = (struct IdleThreadArg *)arg;
   char name[80];
@@ -596,23 +424,6 @@ void * idleThread(void *arg) {
   return NULL;
 }
 
-static inline void getCPUInfo( uint64_t  *cps, uint64_t *socks ) {
-  FILE *cps_pipe, *socks_pipe;
-  char temp[256];
-
-  cps_pipe = popen("./scripts/find_cores_per_socket.sh", "r");
-  socks_pipe = popen("./scripts/find_num_sockets.sh", "r");
-
-  if ( (fgets(temp, 255, cps_pipe)) == NULL ) {
-    err(1, "ERROR reading cores per socket\n");
-  }
-  *cps = atoi(temp);
-
-  if ( (fgets(temp, 255, socks_pipe)) == NULL ) {
-    err(1, "ERROR reading number of sockets\n");
-  }
-  *socks = atoi(temp);
-}
 
 
 int
@@ -639,6 +450,8 @@ main(int argc, char **argv)
   getCPUInfo(&cores_per_socket, &sockets);
   total_cpu = cores_per_socket * sockets;
 
+  //volatile const void *mem_ptr = mmap(NULL, PAGE_SIZE, PROT_READ|PROT_WRITE, MAP_HUGETLB|MAP_SHARED, NULL, 0);
+  
 
   /* ------- Init Signal Handler ------- */
   struct sigaction sigact;
@@ -662,7 +475,7 @@ main(int argc, char **argv)
   eparg.barrier     = &epbarrier;
   eparg.cpu         = EVENT_CPU_ID; //atoi(argv[2]);
   wfey_hwmon_joules_read(eparg.cpu);
-
+  
   /* ------- Init Sources ------- */
   Num_Sources = atoi(argv[3]);   // create sources but don't start them
   Sources     = malloc(sizeof(struct Source)*Num_Sources);
@@ -856,7 +669,9 @@ main(int argc, char **argv)
     //sarg->cpu = atoi(argv[4+i]);
     sarg->cpu = cpuid++;
     sarg->barrier = &srcbarrier;
-    sarg->src->end_flag=0;
+
+    sarg->src->work_func = choose_work();
+    sarg->src->end_flag = 0;
     pthread_create(&sarg->src->tid, NULL, sourceThread, sarg);
   }
   pthread_barrier_wait(&srcbarrier);

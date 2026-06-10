@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "wfey_hwmon.h"
+#include "include/wfey_hwmon.h"
 
 #define USE_ALTRA_HWMON
 
