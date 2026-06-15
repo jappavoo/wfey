@@ -1,6 +1,8 @@
 #ifndef __COMMON_H__
 #define __COMMON_H__
 
+#include <stddef.h>
+#include <sched.h>
 #include <err.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -12,6 +14,11 @@
   }
 #define USAGE "%s <events per sec> <event processor cpu> <# of source cpu>\n"
 
+#define handle_error(msg)                                                      \
+  do {                                                                         \
+    perror(msg);                                                               \
+    exit(EXIT_FAILURE);                                                        \
+  } while (0)
 
 #define CLOCK_SOURCE CLOCK_MONOTONIC
 #define NSEC_IN_SECOND (1000000000)

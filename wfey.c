@@ -1,25 +1,14 @@
-#include <stddef.h>
 #define _GNU_SOURCE
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <inttypes.h>
-#include <sched.h>
-#include <err.h>
-#include <pthread.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <assert.h>
-#include <time.h>
 
-#include <linux/perf_event.h>
-#include <asm/unistd.h>
-#include <sys/ioctl.h>
-#include <string.h>
-#include <signal.h>
-#include <sys/mman.h>
-#include <math.h>
 #include <fcntl.h>
+#include <stdbool.h>
+#include <math.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <assert.h>
+#include <stdint.h>
+#include <pthread.h>
 
 #include "include/wfey.h"
 #include "include/perf.h"
@@ -27,6 +16,8 @@
 
 
 //#define VERBOSE
+//srand(time(NULL));
+
 
 void source_event_activate(source_t this)  {
   // if already active then don't continue
@@ -91,22 +82,106 @@ static inline double compwork() {
   return retval;
 }
 
+//#define MEMCHECK
+#define BYTESTOKB (1024)
+#define BYTESTOMB (1024 * 1024)
+// TO NOTE: Decreasing the data size doesn't not have the expected results
+// perhaps due to overheads or math misktake but should be double checked 
+#define STRIDE 11 // in bytes // todo take cache line size and divide
+// #define DATA_SIZE 5 // in MB
+#define DATA_SIZE (5*BYTESTOMB) // in B
+
+static inline uint64_t memwork() {
+
+  // uint64_t arrsize = (DATA_SIZE * 1024 * 1024); // 5MB to be larger than the
+  // L2 can hold
+  uint64_t arrsize = (DATA_SIZE); // in bytes for lower testing
+  uint64_t elem = arrsize / sizeof(uint64_t);
+
+  uint64_t  sx2 = STRIDE * 2, sx3 = STRIDE * 3, sx4 = STRIDE * 4;
+  uint64_t acc0 = 0, acc1 = 0, acc2 = 0, acc3 = 0;
+
+  uint64_t limit = elem - sx4;
+
+  int rand_fd;
+  uint64_t *memarr;
+  uint64_t bytes_read = 0;
+  ssize_t result = 0;
+  if (( rand_fd = open("/dev/urandom", O_RDONLY)) == -1) {
+      handle_error("opening urandom failed");
+  }
+  if ( (memarr = mmap(NULL, arrsize, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0)) == (void *) -1) {
+    handle_error("mmapping failed");
+  }
+
+  while (bytes_read < arrsize) {
+    if ( (result = read(rand_fd, (char *)memarr + bytes_read, arrsize - bytes_read)) == -1) {
+      handle_error("rand read failed");
+    } else {
+      bytes_read += (uint64_t) result;
+    }
+  }
+
+  /* int i; */
+  /* fprintf(stderr, "memarr:\n"); */
+  /* for ( i = 0; i<arrsize; i++) { */
+  /*   fprintf(stderr, "Element %d: %u\n", i, memarr[i]); */
+  /* } */
+
+#ifdef MEMCHECK  
+  double_t time_spent_tot = 0;
+  double_t loops = 0;
+#endif
+  // do i want to do this for work amount of times or is once okay?
+  for (uint64_t i = 0; i < WORK_COUNT; i++) {
+#ifdef MEMCHECK
+    clock_t begin = clock();
+#endif
+    for (uint64_t j = 0; j < limit; j += sx4) {
+      acc0 = acc0 + memarr[j];
+      acc1 = acc1 + memarr[j + STRIDE];
+      acc2 = acc2 + memarr[j + sx2];
+      acc3 = acc3 + memarr[j + sx3];
+    }
+
+#ifdef MEMCHECK
+    clock_t end = clock();
+    time_spent_tot += ((double)(end - begin) / CLOCKS_PER_SEC);
+    loops+=1;
+#endif
+  }
+#ifdef MEMCHECK 
+  // Per bytes = total elem / stride = num of elem processed (then mul 8 bc 64t)
+  double avgmemloop = (time_spent_tot / loops)*NSEC_IN_SECOND;
+  double bytesproc = ((float)limit / (float)STRIDE) * 8.0;
+  double avgtimeb = bytesproc/avgmemloop;
+  fprintf(stderr, "avg mem loop(ns):%f\n", avgmemloop);
+  fprintf(stderr, "bytes processed per loop:%f\n", bytesproc);
+  fprintf(stderr, "avg time per byte(b/ns):%f\n", avgtimeb);
+#endif
+  close(rand_fd);
+  munmap(memarr, arrsize);
+  
+  return (acc0 + acc1 + acc2 + acc3);
+}
+
+
 static inline void iowork() {
   int fd, rand_fd;
   char randomdata[50];
-  ssize_t datalen, result = 0;
+  ssize_t datalen = 0, result = 0;
   
   for (uint64_t i = 0; i < WORK_COUNT; i++) {
     if ((fd = open("foo", O_TMPFILE | O_RDWR, S_IRUSR | S_IWUSR)) == -1) {
-      perror("opening memwork file failed");
+      handle_error("opening memwork file failed");
     }
     if ((rand_fd = open("/dev/urandom", O_RDONLY)) == -1) {
-      perror("opening urandom failed");
+      handle_error("opening urandom failed");
     }
 
     while (datalen < sizeof(randomdata)) {
-      if ( (result = read(rand_fd, randomdata, sizeof(randomdata) - datalen)) == -1) {
-        perror("rand read failed");
+      if ( (result = read(rand_fd, randomdata + datalen, sizeof(randomdata) - datalen)) == -1) {
+        handle_error("rand read failed");
       } else {
         datalen += result;
       }
@@ -114,15 +189,15 @@ static inline void iowork() {
     
     datalen = 0;
     while (datalen < sizeof(randomdata)) {
-      if ( (result = write(fd, randomdata, sizeof(randomdata) - datalen)) == -1) {
-        perror("rand write failed");
+      if ( (result = write(fd, randomdata+datalen, sizeof(randomdata) - datalen)) == -1) {
+        handle_error("rand write failed");
       } else {	
         datalen += result;
       }
     }
 
-    if (close(rand_fd) == -1) { perror("closing urandom failed"); }
-    if (close(fd) == -1) { perror("closing memwork file failed"); } 
+    if (close(rand_fd) == -1) { handle_error("closing urandom failed"); }
+    if (close(fd) == -1) { handle_error("closing memwork file failed"); } 
   }
 }
 
@@ -214,7 +289,7 @@ epThread(void *arg)
   }
 
   if ( ioctl(pe_fd[0], PERF_EVENT_IOC_RESET, PERF_IOC_FLAG_GROUP) == -1) {
-    perror("reset");
+    handle_error("reset");
   }
 
   /* ---------------------------------------- */
@@ -251,7 +326,7 @@ epThread(void *arg)
 #if WITHPERF >= 1
   rc = ioctl(pe_fd[0], PERF_EVENT_IOC_ENABLE, PERF_IOC_FLAG_GROUP);
   if (rc == -1){
-    perror("enable");
+    handle_error("enable");
   }
 #endif // WITHPERF 1
 
@@ -304,7 +379,7 @@ epThread(void *arg)
   // Stop perf counters
   rc = ioctl(pe_fd[0], PERF_EVENT_IOC_DISABLE, PERF_IOC_FLAG_GROUP);
   if (rc == -1) {
-    perror("disable");
+    handle_error("disable");
   }
 #endif // WITHPERF >= 1
 
@@ -414,11 +489,15 @@ void * sourceThread(void *arg) {
 void * idleThread(void *arg) {
   struct IdleThreadArg *iarg = (struct IdleThreadArg *)arg;
   char name[80];
-
+  
   snprintf(name, 80, "IDLE:%d",iarg->cpu);
 
   pinCpu(iarg->cpu, name);
 
+  if (pthread_detach(pthread_self()) != 0) {
+    handle_error("pthread for idle detach failed\n");
+  }
+  
   free(iarg);
   pthread_barrier_wait(&endbarrier);
   return NULL;
@@ -575,7 +654,7 @@ main(int argc, char **argv)
     iarg->barrier = &idlebarrier;
     pthread_create(&tid, NULL, idleThread, iarg);
   }
-  
+
 #else
   // All the events and the sources occur on a single core (*ish)
 
@@ -656,6 +735,9 @@ main(int argc, char **argv)
 
   /* ------- Run Event Processor ------- */
   pthread_create(&eparg.ep->tid, NULL, epThread, &eparg);
+  if (pthread_detach(eparg.ep->tid) != 0) {
+    handle_error("pthread for ep detach failed\n");
+  }
 
   // wait for event processor to be ready
   pthread_barrier_wait(&epbarrier);
@@ -673,6 +755,9 @@ main(int argc, char **argv)
     sarg->src->work_func = choose_work();
     sarg->src->end_flag = 0;
     pthread_create(&sarg->src->tid, NULL, sourceThread, sarg);
+    if (pthread_detach(sarg->src->tid) != 0) {
+      handle_error("pthread for src detach failed\n");
+    }
   }
   pthread_barrier_wait(&srcbarrier);
   

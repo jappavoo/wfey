@@ -130,8 +130,12 @@ static inline void getCPUInfo( uint64_t  *cps, uint64_t *socks ) {
   FILE *cps_pipe, *socks_pipe;
   char temp[256];
 
-  cps_pipe = popen("./scripts/find_cores_per_socket.sh", "r");
-  socks_pipe = popen("./scripts/find_num_sockets.sh", "r");
+  if ((cps_pipe = popen("./scripts/find_cores_per_socket.sh", "r")) == NULL) {
+    handle_error("Cores Per Socket Pipe open failed");
+  }
+  if ((socks_pipe = popen("./scripts/find_num_sockets.sh", "r")) == NULL) {
+    handle_error("Num Sockets Pipe opebn failed");
+  }
 
   if ( (fgets(temp, 255, cps_pipe)) == NULL ) {
     err(1, "ERROR reading cores per socket\n");
@@ -142,6 +146,13 @@ static inline void getCPUInfo( uint64_t  *cps, uint64_t *socks ) {
     err(1, "ERROR reading number of sockets\n");
   }
   *socks = atoi(temp);
+
+  if (pclose(cps_pipe) == -1) {
+    handle_error("Closing CPS Pipe failed");
+  }
+  if (pclose(socks_pipe) == -1) {
+    handle_error("Closing Socks Pipe failed");
+  }
 }
 
 #endif
