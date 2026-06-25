@@ -56,6 +56,12 @@ _Static_assert(sizeof(union Event) == CACHE_LINE_SIZE,
 _Static_assert(sizeof(union EventSignal) == CACHE_LINE_SIZE,
                "union EventSignal bad size");
 
+int Num_Sources = 0;
+int Num_Processors = 0;
+
+struct Source *Sources            = NULL;
+struct EventProcessor *Processors = NULL;
+
 typedef struct EventProcessor *ep_t;
 struct EventProcessor {
   union EventSignal eventSignal;
@@ -95,7 +101,6 @@ struct IdleThreadArg {
   int                cpu;
   pthread_barrier_t  *barrier;
 };
-
 
 // ----- WFE Logic ----- //
 

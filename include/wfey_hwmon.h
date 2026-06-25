@@ -10,7 +10,6 @@ extern char **wfey_hwmon_joules_paths;
 extern void wfey_hwmon_joules_cache_path(int core);
 
 inline static uint64_t wfey_hwmon_joules_read(int core) {
-
   if (!wfey_hwmon_joules_paths) {
     wfey_hwmon_joules_cache_path(core);
   }

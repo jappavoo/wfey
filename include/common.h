@@ -12,8 +12,12 @@
     fprintf(stderr, "%s: %d: NYI\n", __func__, __LINE__);                      \
     assert(0);                                                                 \
   }
-#define USAGE "%s <events per sec> <event processor cpu> <# of source cpu>\n"
-
+#define USAGE(func)							\
+  do {									\
+    fprintf(stderr, "%s -e <events per sec> -p <event processor cpu> -s <# of source cpu> (-w <perc memwork>)\n", \
+      func);								\
+  } while (0)
+  
 #define handle_error(msg)                                                      \
   do {                                                                         \
     perror(msg);                                                               \
@@ -23,13 +27,14 @@
 #define CLOCK_SOURCE CLOCK_MONOTONIC
 #define NSEC_IN_SECOND (1000000000)
 #define USEC_IN_SECOND (1000000)
+
 #define WORK_COUNT (10000)
-#define WORK_PERC (70) // percent compwork
 
 // Idling Macros
-#define EVENT_CPU_ID 0
+#define EVENT_CPU_ID 1
 #define NUM_EVENT_CPUS 1 // currently locked in at 1, but should be dynamic in the future
-#define META_THREAD 1 // just for clarity
+#define RUNNER_CPU 0 //core 0 for everything extra
+#define META_THREAD 1 // just for clarity -- should be renamed to num meta threads
 
 
 // Sources Random Delay
