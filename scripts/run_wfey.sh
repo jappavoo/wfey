@@ -1,5 +1,5 @@
 #!/bin/bash
-
+#set -x
 # ----------- SetUp ------------ #
 
 source ./scripts/env.sh
@@ -16,11 +16,12 @@ if [[ -z "$WFEYCONFIG" || -z "$PARAMETERS" ]]; then echo "USAGE($0): Input param
 
 if [ ! -f $WFEYCONFIG ]; then make; fi
 
-ARGSTR=${PARAMETERS// /_}
+PARAMETERS_WO_FLAGS=$(echo $PARAMETERS | sed -e 's/-. //g')
+ARGSTR=${PARAMETERS_WO_FLAGS// /_}
 
 #LOGDATE=$(date +%Y-%m-%d-%H-%M-%S)
 
-LOGPATH="logs/$LOGS/$WFEYCONFIG/$ARGSTR/"
+LOGPATH="logs/$LOGS/$WFEYCONFIG/$ARGSTR"
 
 if [[ -n $VERBOSE ]]; then
     echo "SCRIPTDIR  = $SCRIPTDIR"

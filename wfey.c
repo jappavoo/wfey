@@ -16,7 +16,6 @@
 
 
 //#define VERBOSE
-//srand(time(NULL));
 
 
 void source_event_activate(source_t this)  {
@@ -89,7 +88,7 @@ static inline double compwork() {
 // perhaps due to overheads or math misktake but should be double checked 
 #define STRIDE 11 // in bytes // todo take cache line size and divide
 // #define DATA_SIZE 5 // in MB
-#define DATA_SIZE (5*BYTESTOMB) // in B
+#define DATA_SIZE (2*BYTESTOMB) // in B
 
 static inline uint64_t memwork() {
 
@@ -207,14 +206,38 @@ static inline void nullwork() {
   }
 }
 
-
-static inline void* choose_work() {
-  int wt = rand() % 100;
-  if (wt >= WORK_PERC) {
+static inline void *
+work_translate(enum WorkType wt) {
+  switch (wt) {
+  case 1:
     return &compwork;
-  } else {
+  case 2:
     return &memwork;
+  case 3:
+    return &iowork;
+  case -1:
+    return &nullwork;
+  default:
+    fprintf(stderr, "No such work type:%d\n", wt);
+    exit(EXIT_FAILURE);
   }
+}
+      
+static inline enum WorkType choose_work(int work_perc) {
+  if (work_perc == -1) {
+    return NULL_WORK;
+  }
+  int wt = rand() % 100;
+  if (wt >= work_perc) {
+    return COMP_WORK;
+  } else {
+    return MEM_WORK;
+  }
+}
+
+static inline ep_t choose_ep(ep_t proc_list) {
+  int ep = rand() % Num_Processors; // check math
+  return &proc_list[ep];
 }
 
 void
@@ -255,14 +278,16 @@ epThread(void *arg)
   (void) inactive_time_start;
   (void) inactive_time_end;
 #endif // BUSY_POLL
-  
+       
 #endif // WITHPERF 2
 
   uint64_t active_time_total = 0.0;
   uint64_t inactive_time_total = 0.0;
 
-  /* ------- Setting up PERF counters ------- */
+  snprintf(name, 80, "EP:%p:%d",this,id);
+  pinCpu(eparg->cpu, name);
 
+  /* ------- Setting up PERF counters ------- */
   
   uint64_t pe_val[TOTAL_PERF_EVENTS];            // Counter value array corresponding to fd/id array.
   memset(pe_val, 0, sizeof(pe_val));
@@ -294,10 +319,7 @@ epThread(void *arg)
 
   /* ---------------------------------------- */
 #endif // WITHPERF >= 1
-  
-  snprintf(name, 80, "EP:%p:%d",this,id);
-  pinCpu(eparg->cpu, name);
-  
+    
 #ifdef USE_DOORBELL
   volatile uint64_t *db = &(this->eventSignal.db);
   doorbell_reset(db);
@@ -509,27 +531,76 @@ int
 main(int argc, char **argv)
 {
   /* ------- Variables ------- */
-  int                     id=0;
-  pthread_t               tid;
   pthread_barrier_t       epbarrier;
-  struct EventProcessor   ep;
-  struct EPThreadArg      eparg;
-  struct SourceThreadArg *sarg;
-  double                  srcsleep;
   pthread_barrier_t       srcbarrier;
-  uint64_t cores_per_socket, sockets;
-  uint64_t source_end;
-  uint64_t runner_cpu, total_cpu;
+  struct EPThreadArg      *eparg;
+  struct SourceThreadArg  *sarg;
+  struct IdleThreadArg    *iarg;
+
+  int                     opt;
+  pthread_t               tid;
+  uint64_t cores_per_socket, sockets, total_cpu;
+  double event_rate;
+  int id = 0;
+  uint64_t num_idle = 0, cpuid = 1;
+  int work_perc = 100; // percent memwork
+
+  srand((unsigned)time(NULL)); // uniquely setting rand val seed
   
-  if (argc < 4) {
-    fprintf(stderr, USAGE, argv[0]);
-    return(-1);
+  while ((opt = getopt(argc, argv, "he:p:s:w:")) != -1) {
+    switch ((char)opt) {
+    case 'h':
+      USAGE(argv[0]);
+      exit(EXIT_FAILURE);
+    case 'e':
+      // Rate of Events per source is NumEventsPerSec
+      // divided by the number of sources to get per event rate
+      event_rate = atof(optarg);
+      if ( event_rate < 0.0 ) {
+	fprintf(stderr, "Error: Cannot have a negative event rate\n");
+	exit(EXIT_FAILURE);
+      }
+      
+      if ( event_rate == 0.0) {
+	event_rate = 0.00000001; // Very small number that will never send events
+      }
+      break;
+    case 's':
+      Num_Sources = atoi(optarg);
+      break;
+    case 'p':
+      Num_Processors = atoi(optarg);
+      if (Num_Processors > 1) {
+        fprintf(stderr, "Only 1 EP can be run currently\n");
+        exit(EXIT_FAILURE);
+      }
+      break;
+    case 'w':
+      work_perc = atoi(optarg);
+      if ((work_perc > 100 || (work_perc < 0)) && work_perc != -1) {
+        fprintf(stderr,
+                "-w flag is the perc of mem work; enter a number btn 0-100\n");
+        exit(EXIT_FAILURE);
+      }
+      break;
+    default:
+      USAGE(argv[0]);
+      exit(EXIT_FAILURE);
+    }
   }
 
+  if ((Num_Processors == 0) || (Num_Sources == 0)) {
+    fprintf(stderr, "Please define the number of sources and processors\n");
+    USAGE(argv[0]);
+    exit(EXIT_FAILURE);
+  }
+
+  double event_rate_per_source = event_rate / (double)Num_Sources;
+  double srcsleep                       = 1.0/event_rate_per_source;
+  
+  
   getCPUInfo(&cores_per_socket, &sockets);
   total_cpu = cores_per_socket * sockets;
-
-  //volatile const void *mem_ptr = mmap(NULL, PAGE_SIZE, PROT_READ|PROT_WRITE, MAP_HUGETLB|MAP_SHARED, NULL, 0);
   
 
   /* ------- Init Signal Handler ------- */
@@ -542,42 +613,42 @@ main(int argc, char **argv)
   sigemptyset(&sigact.sa_mask);
   sigact.sa_flags = SA_SIGINFO;   // not including SA_RESTART bc dont want WFE/SLEEP to continue 
   sigaction(SIGUSR1, &sigact, &old_sigact);
-  
-  /* ------- Init Event Processor ------- */
-  // initalize event processor (only one right now)
-  ep.id        = id; id++;
-  // eventSignal initalization will be handled by the EP thread
-  // intialize event processing thread
-  pthread_barrier_init(&epbarrier, NULL, 2);
-  eparg.ep          = &ep;
-  eparg.ep->end_flag = 0;
-  eparg.barrier     = &epbarrier;
-  eparg.cpu         = EVENT_CPU_ID; //atoi(argv[2]);
-  wfey_hwmon_joules_read(eparg.cpu);
-  
-  /* ------- Init Sources ------- */
-  Num_Sources = atoi(argv[3]);   // create sources but don't start them
-  Sources     = malloc(sizeof(struct Source)*Num_Sources);
 
-  // Rate of Events per source is NumEventsPerSec == argv[1]
-  // divided by the number of sources to get per event rate
-  double event_rate            = atof(argv[1]);
-  if ( event_rate < 0.0 ) {
-    fprintf(stderr, "Error: Cannot have a negative event rate\n");
-    return(-1);
+  /* ------- Init Event Processors ------- */
+  // eventSignal initalization will be handled by the EP thread
+  Processors = malloc(sizeof(struct EventProcessor) * Num_Processors);
+
+  for (int i=0; i<Num_Processors; i++) {
+    ep_t eproc = &Processors[i];
+    eproc->id = id; id++;
   }
-  
-  if ( event_rate == 0.0) {
-    event_rate = 0.00000001; // Very small number that will never send events
+
+  /* ------- Run Event Processor ------- */
+  pthread_barrier_init(&epbarrier, NULL, Num_Processors + 1);
+  for (int i = 0; i < Num_Processors; i++) {
+    eparg = malloc(sizeof(struct EPThreadArg));
+    eparg->ep = &(Processors[i]);
+    eparg->cpu = cpuid++;
+    eparg->barrier = &epbarrier;
+    wfey_hwmon_joules_read(eparg->cpu); // cache the paths
+
+    eparg->ep->end_flag = 0;
+    pthread_create(&eparg->ep->tid, NULL, epThread, eparg);
+    if (pthread_detach(eparg->ep->tid) != 0) {
+      handle_error("pthread for ep detach failed\n");
+    }
   }
-  double event_rate_per_source = (double)event_rate / (double)Num_Sources;
-  srcsleep                       = 1.0/event_rate_per_source;
-  
-  srand((unsigned)time(NULL)); // uniquely setting rand val seed
+
+  // wait for event processor to be ready
+  pthread_barrier_wait(&epbarrier);
+  pthread_barrier_init(&epbarrier, NULL, Num_Processors+1);  // reset the barrier
+
+
+  /* ------- Init Sources ------- */
+  Sources = malloc(sizeof(struct Source) * Num_Sources);
   
   for (int i=0; i<Num_Sources; i++) {
     source_t src = &Sources[i];
-    src->ep      = &ep;
     src->sleep   = srcsleep;
     src->id      = id; id++;
     source_event_reset(src);
@@ -587,185 +658,65 @@ main(int argc, char **argv)
     src->count   = 0;
   }
 
-
-  /* ------- Init and Start Idle Cores ------- */
-  struct IdleThreadArg *iarg;
-  uint64_t num_idle, cpuid;
-
-  // HUGE TODO!!!!!!!!!! -- sanity check num sources, the number of idle threads on the barriers, and add num sources to barrier count for all cases
-  // might be idle to rename barrier
-  // where runner and main are should be fixed as well
-  
-  num_idle = total_cpu - ( NUM_EVENT_CPUS + Num_Sources + META_THREAD );
-  
-#ifdef SOCKETSPLIT
-  /* This splits the event processor(s) onto 1 socket and sources into another */
-  /*
-      ----------------   ----------------
-      |  Event Proc   | |  Runner+Main  |
-      |  Idle Threads | |  Sources      |
-      ----------------  |  Idle Threads |
-                        -----------------
-   */
-  
-  // first node should have only event handlers on it, rest should be idle
-  // second node will have the sources and one node that will run main + scripts
-  if ( sockets < 2 ) {
-    fprintf( stderr, "There is not another socket to split work across\nTurn off SOCKETSPLIT functionality\n");
-    exit(1);
-  } else if ( sockets > 2 ) {
-    printf( "The case where there are more than 2 sockets has not been thought of in depth -- proceed with caution\n");
-  }
-
-  /* Error Checking */
-  if ( NUM_EVENT_CPUS > cores_per_socket ) {
-    fprintf( stderr, "There are too many event processors to fit on one socket -- Try <%ld\n", cores_per_socket);
-    exit(1);
-  }
-  if ( Num_Sources > (cores_per_socket-META_THREAD) ) {
-    fprintf( stderr, "There are too many source threads to fit on one socket -- Try <%ld\n", (cores_per_socket-1));
-    exit(1);
-  }
-
-  // Starting point -- What cores should the source threads run on
-  cpuid = cores_per_socket + META_THREAD;
-  // Ending point -- Where the idle threads should start
-  source_end = cpuid + Num_Sources;
-  // Where Main and Runners should run
-  runner_cpu = cores_per_socket; // first core on 2nd socket
-
-  // TODO -- idle barrier to end barrier and add the sources to that barrier
-  NYI;
-  // if (num_idle != 0) { pthread_barrier_init(&idlebarrier, NULL, num_idle); }
-  
-  /* Running Idle Threads on Socket 1 */
-  // All but the event processors on the first node
-  for (int i = NUM_EVENT_CPUS; i < cores_per_socket; i++){
-    iarg = malloc(sizeof(struct IdleThreadArg));
-    iarg->cpu = i;
-    iarg->barrier = &idlebarrier;
-    pthread_create(&tid, NULL, idleThread, iarg);
-  }
-  /* Running Idle Threads on Socket 2 */
-  // start at sock2 & after all other after sources + runner
-  for (int i = source_end; i < total_cpu; i++){
-    iarg = malloc(sizeof(struct IdleThreadArg));
-    iarg->cpu = i;
-    iarg->barrier = &idlebarrier;
-    pthread_create(&tid, NULL, idleThread, iarg);
-  }
-
-#else
-  // All the events and the sources occur on a single core (*ish)
-
-  if ( sockets < 2 ) { // There is only one socket so everything has to do work here
-    /*
-      -------------------  
-      |  Event Proc     |
-      |  Source Threads |
-      |  Idle Threads   |
-      |  Runner/Main    |
-      -------------------  
-    */
-
-    /* Error Checking */
-    if ( (NUM_EVENT_CPUS + Num_Sources) > (cores_per_socket - META_THREAD) ) {
-      fprintf( stderr, "There are too many event processors & source threads to fit on one socket together -- Try a total of <%ld\n", cores_per_socket-META_THREAD);
-      exit(1);
-    }
-    
-    cpuid = NUM_EVENT_CPUS;
-    source_end = cpuid + Num_Sources;
-    runner_cpu = cores_per_socket - 1; // last core on socket
-
-    // TODO double check this addition
-    if (num_idle != 0) { pthread_barrier_init(&endbarrier, NULL, num_idle + Num_Sources + 1); }
-    
-    for (int i = source_end; i < (total_cpu-META_THREAD); i++){ 
-      iarg = malloc(sizeof(struct IdleThreadArg));
-      iarg->cpu = i;
-      iarg->barrier = &endbarrier; // TODO -- is this used in struct?
-      pthread_create(&tid, NULL, idleThread, iarg);
-    }
-    
-  } else { // Can put runner scripts on different socket
-      /*
-      ----------------   ----------------
-      |  Event Proc   | |  Runner+Main  |
-      |  Sources      | |  Idle Threads |
-      |  Idle Threads | -----------------
-      ----------------  
-   */
-
-    /* Error Checking */
-    if ( (NUM_EVENT_CPUS + Num_Sources) > cores_per_socket ) {
-      fprintf( stderr, "There are too many event processors & source threads to fit on one socket -- Try a total of <%ld\n", cores_per_socket);
-      exit(1);
-    }
-    if ( META_THREAD > cores_per_socket ) {
-      fprintf( stderr, "There are too many runner threads to fit on one socket (HOW DID THIS HAPPEN) -- Try <%ld\n", cores_per_socket);
-      exit(1);
-    }
-    
-    cpuid = NUM_EVENT_CPUS;
-    source_end = cpuid + Num_Sources;
-    runner_cpu = cores_per_socket; // first core on 2nd socket
-    
-    // TODO idle to end
-    NYI;
-    //if (num_idle != 0) { pthread_barrier_init(&idlebarrier, NULL, num_idle); }
-
-    for (int i = source_end; i < cores_per_socket; i++){ // All but the event processors on the first node
-      iarg = malloc(sizeof(struct IdleThreadArg));
-      iarg->cpu = i;
-      iarg->barrier = &idlebarrier;
-      pthread_create(&tid, NULL, idleThread, iarg);
-    }
-    /* Running Idle Threads on Socket 2 */
-    for (int i = (cores_per_socket + META_THREAD); i < total_cpu; i++){
-      iarg = malloc(sizeof(struct IdleThreadArg));
-      iarg->cpu = i;
-      iarg->barrier = &idlebarrier;
-      pthread_create(&tid, NULL, idleThread, iarg);
-    }
-  }
-#endif
-  
-  pinCpu(runner_cpu, "main thread"); 
-
-  /* ------- Run Event Processor ------- */
-  pthread_create(&eparg.ep->tid, NULL, epThread, &eparg);
-  if (pthread_detach(eparg.ep->tid) != 0) {
-    handle_error("pthread for ep detach failed\n");
-  }
-
-  // wait for event processor to be ready
-  pthread_barrier_wait(&epbarrier);
-  pthread_barrier_init(&epbarrier, NULL, 2);  // reset the barrier 
-
   /* ------- Run Source Threads ------- */
   pthread_barrier_init(&srcbarrier, NULL, Num_Sources+1); // set up barrier for all src to init
   for (int i=0; i<Num_Sources; i++) {
     sarg      = malloc(sizeof(struct SourceThreadArg));
     sarg->src = &(Sources[i]);
-    //sarg->cpu = atoi(argv[4+i]);
     sarg->cpu = cpuid++;
     sarg->barrier = &srcbarrier;
 
-    sarg->src->work_func = choose_work();
+    sarg->src->ep = choose_ep(Processors); //&ep;
+    sarg->src->work_type = choose_work(work_perc);
+    sarg->src->work_func = work_translate(sarg->src->work_type);
     sarg->src->end_flag = 0;
     pthread_create(&sarg->src->tid, NULL, sourceThread, sarg);
     if (pthread_detach(sarg->src->tid) != 0) {
       handle_error("pthread for src detach failed\n");
     }
   }
+  
+  /* ------- Init and Run Idle Cores ------- */
+  /*
+    -------------------
+    |  Runner/Main    |
+    |  Event Proc     |
+    |  Source Threads |
+    |  Idle Threads   |
+    -------------------  
+  */
+  num_idle = total_cpu - (Num_Processors + Num_Sources + META_THREAD);
+  
+  /* Error Checking */
+  if ((Num_Processors + Num_Sources) > (total_cpu - META_THREAD) ) {
+    fprintf( stderr, "There are too many event processors & source threads to fit on all cores across the socket(s) -- Try a total of <%ld\n", total_cpu-META_THREAD);
+    exit(EXIT_FAILURE);
+  }
+
+  int source_end = cpuid; // all events and sources allocated first (might need +1)
+
+  if (num_idle != 0) { pthread_barrier_init(&endbarrier, NULL, num_idle + Num_Sources + 1); }
+    
+  for (int i = source_end; i < total_cpu; i++){ 
+    iarg = malloc(sizeof(struct IdleThreadArg));
+    iarg->cpu = i;
+    iarg->barrier = &endbarrier; // TODO -- is this used in struct?
+    pthread_create(&tid, NULL, idleThread, iarg);
+  } 
+
+  pinCpu(RUNNER_CPU, "main thread");
+
+  // Start the Benchmark (Sources)
   pthread_barrier_wait(&srcbarrier);
   
   usleep(TIMETORUN);
 
-  // TODO : have a list of event processors like we do for sources
-  eparg.ep->end_flag = 1;
-  pthread_kill(eparg.ep->tid, SIGUSR1);
+  for (int i=0; i < Num_Processors; i++) {
+    ep_t ep = &Processors[i];
+    ep->end_flag = 1;
+    // I believe I send this jic ep stuck waiting for event that never comes
+    pthread_kill(ep->tid, SIGUSR1);
+  }
   
   // Wait for event processor to finish
   pthread_barrier_wait(&epbarrier);
@@ -794,11 +745,12 @@ main(int argc, char **argv)
     } else {
       mean = (src->totalns / (double)src->count);
     }
-    fprintf(stdout, "%d,%"PRIu64",%"PRIu64",%.2f\n",
-	    src->id, src->minns, src->maxns, mean);
+    fprintf(stdout, "%d,%s,%"PRIu64",%"PRIu64",%.2f\n",
+	    src->id, printWorkType(src->work_type), src->minns, src->maxns, mean);
   }
-  
+
   free(Sources);
-  return 0;
+  free(Processors);
+  exit(EXIT_SUCCESS);
 }
  

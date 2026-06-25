@@ -36,10 +36,24 @@ static inline void doorbell_press(doorbell_t *db)
 
 //#define SOCKETSPLIT
 
-enum SourceEventState { SRC_EVENT_RESET = 0, SRC_EVENT_ACTIVE = 1 };
+enum WorkType { COMP_WORK = 1, MEM_WORK = 2, IO_WORK = 3, NULL_WORK = -1 };
 
-int            Num_Sources = 0;
-struct Source *Sources     = NULL;
+const char* printWorkType(enum WorkType wt) {
+  switch (wt) {
+  case 1:
+    return "comp work";
+  case 2:
+    return "mem work";
+  case 3:
+    return "io work";
+  case -1:
+    return "null work";
+  default:
+    return "ERROR";
+  }
+}
+
+enum SourceEventState { SRC_EVENT_RESET = 0, SRC_EVENT_ACTIVE = 1 };
 
 union Event {
   char padding[CACHE_LINE_SIZE];
@@ -71,8 +85,8 @@ struct EventProcessor {
 };
 struct EPThreadArg {
   ep_t  ep;
+  int cpu;
   pthread_barrier_t *barrier;
-  int   cpu;
 };
 
 typedef struct Source *source_t;
@@ -86,6 +100,7 @@ struct Source {
   double sleep;
   int id;
   pthread_t tid;
+  enum WorkType work_type;
   void (*work_func)();
   volatile sig_atomic_t end_flag;
   ts_t start_ts;
