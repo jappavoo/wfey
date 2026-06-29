@@ -13,10 +13,15 @@ function powerLog() {
     echo "PDU_LEFT BEAST" > $LOCALPATH/pdu-left-beast-${LOCALDATE}.out
     # Note: don't know if there is a difference between left and right yet so testing out both right now
     echo "PDU_RIGHT BEAST" > $LOCALPATH/pdu-right-beast-${LOCALDATE}.out
-    while sleep 0.5; do
-	${SCRIPTDIR}/pdu/getPDUInfo.sh 1 $PDU_LEFT $BEAST 0 0 >> $LOCALPATH/pdu-left-beast-${LOCALDATE}.out
-	${SCRIPTDIR}/pdu/getPDUInfo.sh 1 $PDU_RIGHT $BEAST 0 0 >> $LOCALPATH/pdu-right-beast-${LOCALDATE}.out
-    done
+    
+    ${SCRIPTDIR}/pdu/getPDUInfo.sh 1 $PDU_LEFT $BEAST 0 0 >> $LOCALPATH/pdu-left-beast-${LOCALDATE}.out
+    ${SCRIPTDIR}/pdu/getPDUInfo.sh 1 $PDU_RIGHT $BEAST 0 0 >> $LOCALPATH/pdu-right-beast-${LOCALDATE}.out
 }
 
-#powerLog "$1" "$2"
+function cleanup() {
+    LOCALPATH=$1
+    LOCALDATE=$2
+
+    ${SCRIPTDIR}/pdu/getPDUInfo.sh 1 $PDU_LEFT $BEAST 0 0 >> $LOCALPATH/pdu-left-beast-${LOCALDATE}.out
+    ${SCRIPTDIR}/pdu/getPDUInfo.sh 1 $PDU_RIGHT $BEAST 0 0 >> $LOCALPATH/pdu-right-beast-${LOCALDATE}.out
+}
