@@ -737,11 +737,11 @@ main(int argc, char **argv)
   /// TODO -- possible segfault occuring with the latency
   float mean;
   
-  fprintf(stdout, "ID,Min,Max,Mean\n");
+  fprintf(stdout, "SRC_ID,WorkType,Latency_Min,Latency_Max,Latency_Mean\n");
   for (int i=0; i<Num_Sources; i++) {
     source_t src = &Sources[i];
     if(src->count == 0) { // never got a chance to finish event
-      src->minns = 0; src->maxns = 0; mean = -1;
+      src->minns = -1; src->maxns = -1; mean = -1;
     } else {
       mean = (src->totalns / (double)src->count);
     }
