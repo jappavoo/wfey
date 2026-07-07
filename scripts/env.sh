@@ -14,11 +14,12 @@ BG_TASK=1
 
 ## Name of experiment folder -- (all stored in parent folder 'logs') ##
 #LOGS="pdu_fullrun"
-LOGS="new_cores_and_param_run"
+LOGS="full_parse"
+#LOGS="test"
 PRETESTPATH="logs/$LOGS/pretest/"
 
 ## How many times to run experiment ##
-times_to_run=1
+times_to_run=5
 
 ## What CPU should all scripts run on ##
 # Note: this should be the same in the benchmark as well (not automated)
@@ -31,12 +32,12 @@ declare -a wfeyconfig=(busypoll_nodb busypoll_db wfe_nodb wfe_db_nomon wfe_db_mo
 declare -a eventprocCPUs=( "1" )
 
 # Full Sweep
-#declare -a sourceCPUs=( "1" "10" "50" )
-#declare -a eventrate=( "0" "10" "100" "1000" "100000")
-#declare -a memperc=( "0" "25" "50" "75" "100" )
+declare -a eventrate=( "0" "10" "100" "1000" "10000")
+declare -a sourceCPUs=( "1" "10" "50" )
+declare -a memperc=( "0" "25" "50" "75" "100" )
 
 # None vs Many Events
-declare -a sourceCPUs=( "1" ) 
-declare -a eventrate=( "0" "50000")
-declare -a memperc=( "0" "100" )
+# declare -a eventrate=( "0" "50000")
+# declare -a sourceCPUs=( "1" "10" ) 
+# declare -a memperc=( "0" "100" )
 

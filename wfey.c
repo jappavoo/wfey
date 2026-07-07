@@ -741,13 +741,14 @@ main(int argc, char **argv)
   for (int i=0; i<Num_Sources; i++) {
     source_t src = &Sources[i];
     if(src->count == 0) { // never got a chance to finish event
-      src->minns = -1; src->maxns = -1; mean = -1;
+      src->minns = 0; src->maxns = 0; mean = -1;
     } else {
       mean = (src->totalns / (double)src->count);
     }
     fprintf(stdout, "%d,%s,%"PRIu64",%"PRIu64",%.2f\n",
 	    src->id, printWorkType(src->work_type), src->minns, src->maxns, mean);
   }
+  fflush(stdout);
 
   free(Sources);
   free(Processors);

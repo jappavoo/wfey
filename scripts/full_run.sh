@@ -15,6 +15,11 @@ mkdir -p ${PRETESTPATH}/${TESTDATE}
 
 diff /tmp/var.before /tmp/var.after > $PRETESTPATH/${TESTDATE}/env.out
 
+runtime=$((30 + ${SLEEP_TO_RESET} + ${SLEEP_TO_FINISH}))
+estimated_timetorun=$((${times_to_run} * ${#wfeyconfig[@]} * ${#eventrate[@]} * ${#eventprocCPUs[@]} * ${#sourceCPUs[@]} * ${#memperc[@]} * ${runtime}))
+
+echo "Estimated time to run is: ${estimated_timetorun} seconds"
+
 for ((i = 0 ; i < ${times_to_run} ; i++ )); do
     export LOGDATE=$(date +%Y-%m-%d-%H-%M-%S)
     cat /proc/loadavg > $PRETESTPATH/${TESTDATE}/loadavg-${LOGDATE}.out

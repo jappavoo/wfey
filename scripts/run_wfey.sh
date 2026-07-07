@@ -52,6 +52,7 @@ fi
 
 # ---------- Run WFEY ---------- #
 
+echo "./$@ 1> $LOGPATH/latency-${LOGDATE}.out 2> $LOGPATH/wfey-${LOGDATE}.out"
 ./$@ 1> $LOGPATH/latency-${LOGDATE}.out 2> $LOGPATH/wfey-${LOGDATE}.out
 
 if [[ -n "$BG_TASK" ]]; then
