@@ -766,7 +766,7 @@ main(int argc, char **argv)
   pthread_t logger_thread;
   int end_flag = 0;
   //int log_pid;
-  pthread_create(&logger_thread, NULL, consumer, &end_flag);
+  pthread_create(&logger_thread, NULL, consumer, (void *) &end_flag);
   
   // Start the Benchmark (Sources)
   pthread_barrier_wait(&srcbarrier);
