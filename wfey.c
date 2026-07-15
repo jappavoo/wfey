@@ -9,35 +9,42 @@
 #include <assert.h>
 #include <stdint.h>
 #include <pthread.h>
+#include <sys/shm.h>
 
 #include "include/wfey.h"
 #include "include/perf.h"
 #include "include/wfey_hwmon.h"
+#include "include/logging.h"
 
 
 //#define VERBOSE
 
 
-void source_event_activate(source_t this)  {
-  // if already active then don't continue
-  // already processing an event
-  // relay this back to source so no signal sent
-  ts_now(&(this->start_ts));
-  __atomic_store_n(&(this->event.state), SRC_EVENT_ACTIVE,
-		   __ATOMIC_SEQ_CST);
-}
-
-bool source_event_isActive(source_t this)   {
-  return __atomic_load_n(&(this->event.state),
+bool source_event_isActive(volatile int state)
+{
+  return __atomic_load_n(&state,
 			 __ATOMIC_SEQ_CST) == SRC_EVENT_ACTIVE;
 }
 
-void source_event_reset(source_t this) {
-  ts_now(&(this->end_ts));
+int source_event_activate(union Event *event)  {
+  // if already active then don't continue
+  // already processing an event
+  // relay this back to source so no signal sent
+  if (source_event_isActive(event->state)) {
+    return -1;
+  }
+  // ts_now(&(this->start_ts));
+  //__atomic_store_n(&(this->event.state), SRC_EVENT_ACTIVE, __ATOMIC_SEQ_CST);
+  __atomic_store_n(&event->state, SRC_EVENT_ACTIVE, __ATOMIC_SEQ_CST);
+
+  return 0;
+}
+
+void source_event_reset(union Event *event) {
   // todo make local then add to log array per source
   // this->log[i].start
   // end if 0 if miss -- 
-  __atomic_store_n(&(this->event.state), SRC_EVENT_RESET,
+  __atomic_store_n(&(event->state), SRC_EVENT_RESET,
 		   __ATOMIC_SEQ_CST);
   // TODO there should probably~ be a lock involved here :p
   // min might be wrong! or this process can be really fast
@@ -47,22 +54,22 @@ void source_event_reset(source_t this) {
   /* } */
   
 
-  uint64_t ns = ts_diff(this->start_ts, this->end_ts);
+/*   uint64_t ns = ts_diff(this->start_ts, this->end_ts); */
 
-  // become an assert TODO
-  if ( (int64_t)ns <= 0 ) { // Give up again -- shenanigans occured
-    return;
-  }
+/*   // become an assert TODO */
+/*   if ( (int64_t)ns <= 0 ) { // Give up again -- shenanigans occured */
+/*     return; */
+/*   } */
 
-  this->totalns += ns;
-  this->count++;
+/*   this->totalns += ns; */
+/*   this->count++; */
 
-  if ( ns < this->minns ) { this->minns = ns; }
-  if ( ns > this->maxns ) { this->maxns = ns; }
-#ifdef VERBOSE
-  fprintf(stderr, "%d: Diff=%ld, TotalNS=%ld, Count=%ld, Min=%lu, Max=%lu\n",
-	  this->id, ns, this->totalns, this->count, this->minns, this->maxns);
-#endif
+/*   if ( ns < this->minns ) { this->minns = ns; } */
+/*   if ( ns > this->maxns ) { this->maxns = ns; } */
+/* #ifdef VERBOSE */
+/*   fprintf(stderr, "%d: Diff=%ld, TotalNS=%ld, Count=%ld, Min=%lu, Max=%lu\n", */
+/* 	  this->id, ns, this->totalns, this->count, this->minns, this->maxns); */
+/* #endif */
 }
 
 static inline double compwork() {
@@ -235,20 +242,26 @@ static inline enum WorkType choose_work(int work_perc) {
   }
 }
 
-static inline ep_t choose_ep(ep_t proc_list) {
+// static inline int choose_ep(ep_t proc_list) {
+static inline int choose_ep() {
   int ep = rand() % Num_Processors; // check math
-  return &proc_list[ep];
+  // return &proc_list[ep];
+  return ep;
 }
 
 void
-EP_handle_event(ep_t this, source_t src)
+EP_handle_event(ep_t this, struct MailBox_Slot mb)
 {
 #ifdef VERBOSE
   fprintf(stderr, "%s: this=%p(%d) src=%p(%d)\n",
 	  __FUNCTION__, this, this->id, src, src->id);
 #endif
-  src->work_func();
-  source_event_reset(src);
+  mb.work_func();
+
+  ts_t timestamp;
+  ts_now(&timestamp);
+  source_event_reset(mb.event);
+  log_write(mb.event_num, mb.id, this->id, timestamp);
 }
 
   
@@ -321,7 +334,8 @@ epThread(void *arg)
 #endif // WITHPERF >= 1
     
 #ifdef USE_DOORBELL
-  volatile uint64_t *db = &(this->eventSignal.db);
+  // volatile uint64_t *db = &(this->eventSignal.db);
+  doorbell_t *db = &(this->mb->db.db);
   doorbell_reset(db);
 #endif
   
@@ -385,10 +399,14 @@ epThread(void *arg)
     }    
 #endif // USE_DOORBELL
     for (int i=0; i<Num_Sources; i++) {
-      source_t src = &(Sources[i]);
-      if (source_event_isActive(src)) {
+      //source_t src = &(Sources[i]);
+      struct MailBox_Slot mb_slot = this->mb->mb[i];// slot for the current source
+      if (mb_slot.event == NULL) { // mailbox hasn't been set up yet
+        continue;
+      }
+      if (source_event_isActive(mb_slot.event->state)) {
 	events++;
-	EP_handle_event(this, src);
+	EP_handle_event(this, mb_slot);
       }
     }
   }
@@ -463,9 +481,14 @@ void * sourceThread(void *arg) {
   char     name[80];
   
 #ifdef USE_DOORBELL
-  ep_t     ep                  = this->ep;
-  doorbell_t *db = &(ep->eventSignal.db);
+  /* ep_t     ep                  = this->ep; */
+  /* doorbell_t *db = &(ep->eventSignal.db); */
+  doorbell_t *db = &(this->mb->db.db);
 #endif
+  struct MailBox_Slot *mb_slot = &(this->mb->mb[(this->id)-1]); // srcs start at 1 index
+  mb_slot->id = this->id;
+  mb_slot->work_func = this->work_func;
+  mb_slot->event = &this->event;
 
   // Add random delay to sleep time -- ?: should this delay be randomized every time? too much float math i think
   double mod_perc = (double)(rand()%(DELAYADD + 1))/100.0; // rand()%((max+1)-min) + min
@@ -484,6 +507,8 @@ void * sourceThread(void *arg) {
 
   pthread_barrier_wait(sarg->barrier); // waits for all srcs to be ready then sends events
 
+  int eventnum = 1;
+  ts_t timestamp;
   
   while ( !this->end_flag ) {
     ndelay = thedelay;
@@ -493,7 +518,14 @@ void * sourceThread(void *arg) {
       }
       ndelay = nrem;
     }
-    source_event_activate(this);
+    if (source_event_activate(&this->event) == -1) {
+      continue;
+    } else {
+      mb_slot->event_num = eventnum;
+      ts_now(&timestamp);
+      log_write(mb_slot->event_num, mb_slot->id, this->ep_id, timestamp);
+      eventnum++;
+    }
 #ifdef USE_DOORBELL
     doorbell_press(db);
 #ifndef USE_MONITOR // To use the monitor the doorbell must be on
@@ -614,13 +646,34 @@ main(int argc, char **argv)
   sigact.sa_flags = SA_SIGINFO;   // not including SA_RESTART bc dont want WFE/SLEEP to continue 
   sigaction(SIGUSR1, &sigact, &old_sigact);
 
+  /* ------- Init Mailboxes ------- */
+  Mailboxes = malloc(sizeof(struct MailBox) * Num_Processors);
+  
   /* ------- Init Event Processors ------- */
   // eventSignal initalization will be handled by the EP thread
-  Processors = malloc(sizeof(struct EventProcessor) * Num_Processors);
+  struct EventProcessor *Processors = malloc(sizeof(struct EventProcessor) * Num_Processors);
 
   for (int i=0; i<Num_Processors; i++) {
     ep_t eproc = &Processors[i];
     eproc->id = id; id++;
+    eproc->mb = &Mailboxes[eproc->id];
+
+    int shm_id;
+    void *shm;
+    if ((shm_id = shmget(IPC_PRIVATE, (sizeof(struct MailBox_Slot) * Num_Sources),
+                         IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR)) == -1) {
+      handle_error("ep shmget\n");
+    }
+    if ((shm = shmat(shm_id, NULL, 0)) == NULL) {
+      handle_error("ep shmat\n");
+    }
+
+    eproc->mem.seg_id = shm_id;
+    eproc->mem.data = shm;
+    eproc->mb->mb = (struct MailBox_Slot *)shm;
+    
+    eproc->eventSignal = eproc->mb->db;
+    eproc->end_flag = 0;
   }
 
   /* ------- Run Event Processor ------- */
@@ -632,7 +685,6 @@ main(int argc, char **argv)
     eparg->barrier = &epbarrier;
     wfey_hwmon_joules_read(eparg->cpu); // cache the paths
 
-    eparg->ep->end_flag = 0;
     pthread_create(&eparg->ep->tid, NULL, epThread, eparg);
     if (pthread_detach(eparg->ep->tid) != 0) {
       handle_error("pthread for ep detach failed\n");
@@ -645,13 +697,21 @@ main(int argc, char **argv)
 
 
   /* ------- Init Sources ------- */
+  struct Source *Sources            = NULL;
   Sources = malloc(sizeof(struct Source) * Num_Sources);
   
   for (int i=0; i<Num_Sources; i++) {
     source_t src = &Sources[i];
-    src->sleep   = srcsleep;
     src->id      = id; id++;
-    source_event_reset(src);
+    // sarg->src->ep = choose_ep(Processors); //&ep;
+    src->ep_id = choose_ep(); // ep id --> Num_Proc needs to be global
+    src->sleep   = srcsleep;
+    src->work_type = choose_work(work_perc);
+    src->work_func = work_translate(src->work_type);
+    src->mb = &Mailboxes[src->ep_id];
+    
+    source_event_reset(&src->event);
+    src->end_flag = 0;
     src->totalns = 0;
     src->minns   = (uint64_t)-1;
     src->maxns   = 0;
@@ -666,10 +726,6 @@ main(int argc, char **argv)
     sarg->cpu = cpuid++;
     sarg->barrier = &srcbarrier;
 
-    sarg->src->ep = choose_ep(Processors); //&ep;
-    sarg->src->work_type = choose_work(work_perc);
-    sarg->src->work_func = work_translate(sarg->src->work_type);
-    sarg->src->end_flag = 0;
     pthread_create(&sarg->src->tid, NULL, sourceThread, sarg);
     if (pthread_detach(sarg->src->tid) != 0) {
       handle_error("pthread for src detach failed\n");
@@ -706,6 +762,12 @@ main(int argc, char **argv)
 
   pinCpu(RUNNER_CPU, "main thread");
 
+  // Start logging thread
+  pthread_t logger_thread;
+  int end_flag = 0;
+  //int log_pid;
+  pthread_create(&logger_thread, NULL, consumer, &end_flag);
+  
   // Start the Benchmark (Sources)
   pthread_barrier_wait(&srcbarrier);
   
@@ -732,6 +794,22 @@ main(int argc, char **argv)
   
   // Wait for all source and idle threads to clean up and return
   pthread_barrier_wait(&endbarrier);
+
+  // End Logging Thread
+  end_flag = 1;
+  pthread_join(logger_thread, NULL);
+
+  // Clean Up Shared Memory
+  for (int i=0; i < Num_Processors; i++) {
+    ep_t ep = &Processors[i];
+
+    if (shmdt(ep->mem.data) == -1) {
+      handle_error("ep shmdt\n");
+    }
+    if (shmctl(ep->mem.seg_id, IPC_RMID, 0) == -1) {
+      handle_error("ep shmctl\n");
+    }
+  }
   
   /* ------- Latency Logging ------- */
   /// TODO -- possible segfault occuring with the latency

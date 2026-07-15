@@ -9,6 +9,13 @@
 
 #include "common.h"
 
+// ----- Global Memory ----- //
+
+int Num_Sources = 0;
+int Num_Processors = 0;
+// Mailboxes
+// Doorbells
+
 // ----- Doorbell Logic ----- //
 typedef volatile uint64_t doorbell_t;
 enum { DOORBELL_RESET = 0, DOORBELL_PRESSED = 1 };
@@ -29,13 +36,12 @@ static inline void doorbell_press(doorbell_t *db)
 }
 
 // ----- BENCHMARK Logic ----- //
-// 
 //#define BUSY_POLL
 //#define USE_DOORBELL
 //#define USE_MONITOR
-
 //#define SOCKETSPLIT
 
+/// --- Work Types --- ///
 enum WorkType { COMP_WORK = 1, MEM_WORK = 2, IO_WORK = 3, NULL_WORK = -1 };
 
 const char* printWorkType(enum WorkType wt) {
@@ -53,6 +59,7 @@ const char* printWorkType(enum WorkType wt) {
   }
 }
 
+/// --- Event States --- ///
 enum SourceEventState { SRC_EVENT_RESET = 0, SRC_EVENT_ACTIVE = 1 };
 
 union Event {
@@ -70,25 +77,45 @@ _Static_assert(sizeof(union Event) == CACHE_LINE_SIZE,
 _Static_assert(sizeof(union EventSignal) == CACHE_LINE_SIZE,
                "union EventSignal bad size");
 
-int Num_Sources = 0;
-int Num_Processors = 0;
-
-struct Source *Sources            = NULL;
-struct EventProcessor *Processors = NULL;
-
-typedef struct EventProcessor *ep_t;
-struct EventProcessor {
-  union EventSignal eventSignal;
+/// --- MailBox --- ///
+struct MailBox_Slot {
   int id;
-  pthread_t tid;
-  volatile sig_atomic_t end_flag;
+  int event_num;
+  void (*work_func)();
+  union Event *event;
 };
+struct MailBox {
+  union EventSignal db;
+  struct MailBox_Slot *mb;
+};
+
+struct shm_mem {
+  int seg_id;
+  //key_t shm_key;
+  void *data;
+};
+
+// 1 mailbox per event processor
+struct MailBox *Mailboxes = NULL;
+
+/// --- Event Processors --- ///
+typedef struct EventProcessor *ep_t;
 struct EPThreadArg {
   ep_t  ep;
   int cpu;
   pthread_barrier_t *barrier;
 };
+struct EventProcessor {
+  int id;
+  pthread_t tid;
+  struct MailBox *mb;
+  struct shm_mem mem;
+  union EventSignal eventSignal; //dont know what to do with this in the mailbox case
+  volatile sig_atomic_t end_flag;
+};
 
+
+/// --- Event Sources --- ///
 typedef struct Source *source_t;
 struct SourceThreadArg {
   source_t src;
@@ -96,12 +123,15 @@ struct SourceThreadArg {
   pthread_barrier_t *barrier;
 };
 struct Source {
-  ep_t ep;
-  double sleep;
   int id;
   pthread_t tid;
+  // ep_t ep;
+  int ep_id;
+  double sleep;
   enum WorkType work_type;
   void (*work_func)();
+  union Event event;
+  struct MailBox *mb;
   volatile sig_atomic_t end_flag;
   ts_t start_ts;
   ts_t end_ts;
@@ -109,12 +139,12 @@ struct Source {
   uint64_t minns;
   uint64_t maxns;
   uint64_t count;
-  union Event event;
 };
 
+/// --- Idle Threads --- ///
 struct IdleThreadArg {
   int                cpu;
-  pthread_barrier_t  *barrier;
+  pthread_barrier_t *barrier;
 };
 
 // ----- WFE Logic ----- //
