@@ -13,8 +13,8 @@ source ${SCRIPTDIR}/pdu_env.sh
 BG_TASK=1
 
 ## Name of experiment folder -- (all stored in parent folder 'logs') ##
-#LOGS="pdu_fullrun"
-LOGS="full_parse"
+LOGS="more_sources"
+#LOGS="full_parse"
 #LOGS="test"
 PRETESTPATH="logs/$LOGS/pretest/"
 
@@ -32,9 +32,12 @@ declare -a wfeyconfig=(busypoll_nodb busypoll_db wfe_nodb wfe_db_nomon wfe_db_mo
 declare -a eventprocCPUs=( "1" )
 
 # Full Sweep
+# declare -a eventrate=( "0" "10" "100" "1000" "10000")
+# declare -a sourceCPUs=( "1" "10" "50" )
+# declare -a memperc=( "0" "25" "50" "75" "100" )
 declare -a eventrate=( "0" "10" "100" "1000" "10000")
-declare -a sourceCPUs=( "1" "10" "50" )
-declare -a memperc=( "0" "25" "50" "75" "100" )
+declare -a sourceCPUs=( "1" "10" )
+declare -a memperc=( "0" "50" "100" )
 
 # None vs Many Events
 # declare -a eventrate=( "0" "50000")

@@ -645,11 +645,15 @@ main(int argc, char **argv)
 
 
   /* ------- Init Sources ------- */
-  Sources = malloc(sizeof(struct Source) * Num_Sources);
+  int working_sources = Num_Sources;
+  // Expects to be tested with only 1 src or 10 sources
+  int total_sources = (Num_Sources < 10) ? 10 : 20;
+  Sources = malloc(sizeof(struct Source) * total_sources);
   
-  for (int i=0; i<Num_Sources; i++) {
+  for (int i=0; i<total_sources; i++) {
     source_t src = &Sources[i];
-    src->sleep   = srcsleep;
+    // Not working sources will never create an event
+    src->sleep = ( i < working_sources ) ? srcsleep : (TIMETORUN + 1.0);      
     src->id      = id; id++;
     source_event_reset(src);
     src->totalns = 0;
@@ -659,8 +663,8 @@ main(int argc, char **argv)
   }
 
   /* ------- Run Source Threads ------- */
-  pthread_barrier_init(&srcbarrier, NULL, Num_Sources+1); // set up barrier for all src to init
-  for (int i=0; i<Num_Sources; i++) {
+  pthread_barrier_init(&srcbarrier, NULL, total_sources+1); // set up barrier for all src to init
+  for (int i=0; i<total_sources; i++) {
     sarg      = malloc(sizeof(struct SourceThreadArg));
     sarg->src = &(Sources[i]);
     sarg->cpu = cpuid++;
@@ -685,17 +689,17 @@ main(int argc, char **argv)
     |  Idle Threads   |
     -------------------  
   */
-  num_idle = total_cpu - (Num_Processors + Num_Sources + META_THREAD);
+  num_idle = total_cpu - (Num_Processors + total_sources + META_THREAD);
   
   /* Error Checking */
-  if ((Num_Processors + Num_Sources) > (total_cpu - META_THREAD) ) {
+  if ((Num_Processors + total_sources) > (total_cpu - META_THREAD) ) {
     fprintf( stderr, "There are too many event processors & source threads to fit on all cores across the socket(s) -- Try a total of <%ld\n", total_cpu-META_THREAD);
     exit(EXIT_FAILURE);
   }
 
   int source_end = cpuid; // all events and sources allocated first (might need +1)
 
-  if (num_idle != 0) { pthread_barrier_init(&endbarrier, NULL, num_idle + Num_Sources + 1); }
+  if (num_idle != 0) { pthread_barrier_init(&endbarrier, NULL, num_idle + total_sources + 1); }
     
   for (int i = source_end; i < total_cpu; i++){ 
     iarg = malloc(sizeof(struct IdleThreadArg));
@@ -724,7 +728,7 @@ main(int argc, char **argv)
   // Extra verification sources not stuck in sleep
   // Individual flags sent because dont want to send a signal
   // to an already cleaned up source
-  for (int i=0; i<Num_Sources; i++) {
+  for (int i=0; i<total_sources; i++) {
     source_t src = &Sources[i];
     src->end_flag=1;
     pthread_kill(src->tid, SIGUSR1);
@@ -738,7 +742,7 @@ main(int argc, char **argv)
   float mean;
   
   fprintf(stdout, "SRC_ID,WorkType,Latency_Min,Latency_Max,Latency_Mean\n");
-  for (int i=0; i<Num_Sources; i++) {
+  for (int i=0; i<total_sources; i++) {
     source_t src = &Sources[i];
     if(src->count == 0) { // never got a chance to finish event
       src->minns = 0; src->maxns = 0; mean = -1;
