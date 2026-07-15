@@ -36,6 +36,7 @@
 #define RUNNER_CPU 0 //core 0 for everything extra
 #define META_THREAD 1 // just for clarity -- should be renamed to num meta threads
 
+#define LATENCY_FD 3
 
 // Sources Random Delay
 #define DELAYADD (10) // max percentage of delay to +- delay

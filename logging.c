@@ -9,7 +9,7 @@ int read_index = 0, write_index = 0, count = 0;
 
 struct timespec wait = {1.0, 0.0};
 
-void log_write(int eventID, int srcID, int epID, struct timespec ts) {
+void buffer_write(int eventID, int srcID, int epID, struct timespec ts) {
   struct Log_Item item = {eventID = eventID, srcID = srcID, epID = epID,
                           ts = ts};
   producer((void *)&item);
@@ -37,14 +37,10 @@ void *producer(void *arg) {
   return NULL;
 }
 
-void write_to_stderr(struct Log_Item data) {
-  fprintf(stderr, "%d %d %d %ld:%ld\n", data.eventID, data.srcID, data.epID, data.ts.tv_sec, data.ts.tv_nsec);
-}
-
 void* consumer(void *arg) {
-  // struct Log *log = (struct Log *)arg;
-  // int *end_flag = log->end_flag;
-  int *end_flag = (int *)arg;
+  struct Log *log = (struct Log *)arg;
+  int *end_flag = log->end_flag;
+  FILE *latency_stream = log->latency_stream;
   
   while (!(*end_flag)) {
     pthread_mutex_lock(&lock);
@@ -57,7 +53,7 @@ void* consumer(void *arg) {
     struct Log_Item data = buffer[read_index];
     //printf("Consumed: %d at %d\n", data.eventID, read_index);
     
-    write_to_stderr(data);
+    write_to_log(latency_stream, data);
     
     read_index = (read_index + 1) % BUFFER_SIZE;
     count--;

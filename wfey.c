@@ -261,7 +261,7 @@ EP_handle_event(ep_t this, struct MailBox_Slot mb)
   ts_t timestamp;
   ts_now(&timestamp);
   source_event_reset(mb.event);
-  log_write(mb.event_num, mb.id, this->id, timestamp);
+  buffer_write(mb.event_num, mb.id, this->id, timestamp);
 }
 
   
@@ -523,7 +523,7 @@ void * sourceThread(void *arg) {
     } else {
       mb_slot->event_num = eventnum;
       ts_now(&timestamp);
-      log_write(mb_slot->event_num, mb_slot->id, this->ep_id, timestamp);
+      buffer_write(mb_slot->event_num, mb_slot->id, this->ep_id, timestamp);
       eventnum++;
     }
 #ifdef USE_DOORBELL
@@ -762,11 +762,19 @@ main(int argc, char **argv)
 
   pinCpu(RUNNER_CPU, "main thread");
 
+  // Create Buffer File
+  FILE *latency_stream;
+  if ( (latency_stream = fdopen(LATENCY_FD, "w")) == NULL) {
+    handle_error("opening latency stream\n");
+  }
+
+  fprintf(latency_stream, "EventID, SrcID, EpID, TS\n");
   // Start logging thread
   pthread_t logger_thread;
   int end_flag = 0;
+  struct Log arg = {latency_stream, &end_flag};
   //int log_pid;
-  pthread_create(&logger_thread, NULL, consumer, (void *) &end_flag);
+  pthread_create(&logger_thread, NULL, consumer, (void *) &arg);
   
   // Start the Benchmark (Sources)
   pthread_barrier_wait(&srcbarrier);
@@ -812,21 +820,24 @@ main(int argc, char **argv)
   }
   
   /* ------- Latency Logging ------- */
-  /// TODO -- possible segfault occuring with the latency
-  float mean;
+
+  /* float mean; */
   
-  fprintf(stdout, "SRC_ID,WorkType,Latency_Min,Latency_Max,Latency_Mean\n");
-  for (int i=0; i<Num_Sources; i++) {
-    source_t src = &Sources[i];
-    if(src->count == 0) { // never got a chance to finish event
-      src->minns = 0; src->maxns = 0; mean = -1;
-    } else {
-      mean = (src->totalns / (double)src->count);
-    }
-    fprintf(stdout, "%d,%s,%"PRIu64",%"PRIu64",%.2f\n",
-	    src->id, printWorkType(src->work_type), src->minns, src->maxns, mean);
-  }
-  fflush(stdout);
+  /* fprintf(stdout, "SRC_ID,WorkType,Latency_Min,Latency_Max,Latency_Mean\n"); */
+  /* for (int i=0; i<Num_Sources; i++) { */
+  /*   source_t src = &Sources[i]; */
+  /*   if(src->count == 0) { // never got a chance to finish event */
+  /*     src->minns = 0; src->maxns = 0; mean = -1; */
+  /*   } else { */
+  /*     mean = (src->totalns / (double)src->count); */
+  /*   } */
+  /*   fprintf(stdout, "%d,%s,%"PRIu64",%"PRIu64",%.2f\n", */
+  /* 	    src->id, printWorkType(src->work_type), src->minns, src->maxns, mean); */
+  /* } */
+
+  fflush(latency_stream);
+  fclose(latency_stream);
+  //fflush(stdout);
 
   free(Sources);
   free(Processors);
