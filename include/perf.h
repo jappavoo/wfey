@@ -16,6 +16,7 @@
 #define WITHPERF 2
 #define TOTAL_PERF_EVENTS 2
 
+//#define BEAST ## If on beast (not dynamic pmu w/ sparks)
 
 struct read_format {
   uint64_t nr;      // number of events

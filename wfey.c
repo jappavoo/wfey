@@ -313,8 +313,13 @@ epThread(void *arg)
   struct read_format counter_results;
 
   // Configure the group of PMUs to count
+#ifdef BEAST
   configure_perf_event(&pe[0], PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES);
   configure_perf_event(&pe[1], PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS);
+#else
+  configure_perf_event(&pe[0], 10, 0x0011);
+  configure_perf_event(&pe[1], 10, 0x0008);
+#endif
 
   // Create event group leader
   pe_fd[0] = perf_event_open(&pe[0], 0, -1, -1, PERF_FLAG_FD_CLOEXEC);
@@ -366,7 +371,9 @@ epThread(void *arg)
   }
 #endif // WITHPERF 1
 
+#ifdef BEAST
   start_energy = wfey_hwmon_joules_read(eparg->cpu);
+#endif
   
   while ( !this->end_flag ) {    
 #ifndef BUSY_POLL
@@ -412,8 +419,9 @@ epThread(void *arg)
   }
   // all done
 
-  // TODO change macro
+#ifdef BEAST
   end_energy = wfey_hwmon_joules_read(eparg->cpu);
+#endif
   
 #if WITHPERF >= 1
   // Stop perf counters
@@ -683,7 +691,9 @@ main(int argc, char **argv)
     eparg->ep = &(Processors[i]);
     eparg->cpu = cpuid++;
     eparg->barrier = &epbarrier;
+#ifdef BEAST
     wfey_hwmon_joules_read(eparg->cpu); // cache the paths
+#endif
 
     pthread_create(&eparg->ep->tid, NULL, epThread, eparg);
     if (pthread_detach(eparg->ep->tid) != 0) {
