@@ -13,7 +13,12 @@
 #include "include/wfey.h"
 #include "include/perf.h"
 #include "include/wfey_hwmon.h"
-
+#ifdef GPU_SOURCE
+#include "include/gpu_source.h"
+#endif
+#if defined(GPU_SOURCE) && !defined(USE_DOORBELL)
+#error "GPU_SOURCE requires USE_DOORBELL"
+#endif
 
 //#define VERBOSE
 
@@ -64,6 +69,14 @@ void source_event_reset(source_t this) {
 	  this->id, ns, this->totalns, this->count, this->minns, this->maxns);
 #endif
 }
+
+#ifdef GPU_SOURCE
+void gpu_source_event_reset(source_t this) {
+  __atomic_store_n(&(this->event.state), SRC_EVENT_RESET,
+                   __ATOMIC_SEQ_CST);
+  this->count++;
+}
+#endif
 
 static inline double compwork() {
   int x, y;
@@ -248,7 +261,11 @@ EP_handle_event(ep_t this, source_t src)
 	  __FUNCTION__, this, this->id, src, src->id);
 #endif
   src->work_func();
+#ifdef GPU_SOURCE
+  gpu_source_event_reset(src);
+#else
   source_event_reset(src);
+#endif
 }
 
   
@@ -294,7 +311,7 @@ epThread(void *arg)
   
 #if WITHPERF >= 1
   int rc;
-  uint64_t pe_fd[TOTAL_PERF_EVENTS];                  // pe_fd[0] will be the group leader file descriptor
+  int pe_fd[TOTAL_PERF_EVENTS];                       // pe_fd[0] will be the group leader file descriptor
   uint64_t pe_id[TOTAL_PERF_EVENTS];                  // event pe_ids for file descriptors
   struct perf_event_attr pe[TOTAL_PERF_EVENTS];  // Configuration structure for perf events 
   struct read_format counter_results;
@@ -305,12 +322,16 @@ epThread(void *arg)
 
   // Create event group leader
   pe_fd[0] = perf_event_open(&pe[0], 0, -1, -1, PERF_FLAG_FD_CLOEXEC);
-  ioctl(pe_fd[0], PERF_EVENT_IOC_ID, &pe_id[0]);
+  if (ioctl(pe_fd[0], PERF_EVENT_IOC_ID, &pe_id[0]) == -1) {
+    handle_error("perf id");
+  }
   // Create the rest of the events -- with pe_fd[0] as the group leader
 
   for(int i = 1; i < TOTAL_PERF_EVENTS; i++){
     pe_fd[i] = perf_event_open(&pe[i], 0, -1, pe_fd[0], PERF_FLAG_FD_CLOEXEC);
-    ioctl(pe_fd[i], PERF_EVENT_IOC_ID, &pe_id[i]);
+    if (ioctl(pe_fd[i], PERF_EVENT_IOC_ID, &pe_id[i]) == -1) {
+      handle_error("perf id");
+    }
   }
 
   if ( ioctl(pe_fd[0], PERF_EVENT_IOC_RESET, PERF_IOC_FLAG_GROUP) == -1) {
@@ -352,7 +373,9 @@ epThread(void *arg)
   }
 #endif // WITHPERF 1
 
+#ifndef GPU_SOURCE
   start_energy = wfey_hwmon_joules_read(eparg->cpu);
+#endif
   
   while ( !this->end_flag ) {    
 #ifndef BUSY_POLL
@@ -395,7 +418,9 @@ epThread(void *arg)
   // all done
 
   // TODO change macro
+#ifndef GPU_SOURCE
   end_energy = wfey_hwmon_joules_read(eparg->cpu);
+#endif
   
 #if WITHPERF >= 1
   // Stop perf counters
@@ -413,12 +438,28 @@ epThread(void *arg)
 
 #if WITHPERF >= 1
   // Read the group of perf counters
+  memset(&counter_results, 0, sizeof(counter_results));
   rc = read(pe_fd[0], &counter_results, sizeof(counter_results));
+  if (rc == -1) {
+    handle_error("perf read");
+  }
+
+  if (getenv("WFEY_PERF_DEBUG") != NULL) {
+    fprintf(stderr, "perf read rc=%d nr=%"PRIu64" enabled=%"PRIu64" running=%"PRIu64"\n",
+            rc, counter_results.nr, counter_results.time_enabled,
+            counter_results.time_running);
+  }
 
   for(int i = 0; i < counter_results.nr; i++) {
+    if (getenv("WFEY_PERF_DEBUG") != NULL) {
+      fprintf(stderr, "perf value[%d]=%"PRIu64" id=%"PRIu64" lost=%"PRIu64"\n",
+              i, counter_results.values[i].value,
+              counter_results.values[i].id,
+              counter_results.values[i].lost);
+    }
     for(int j = 0; j < TOTAL_PERF_EVENTS ;j++){
       if(counter_results.values[i].id == pe_id[j]){
-        pe_val[i] = counter_results.values[i].value;
+        pe_val[j] = counter_results.values[i].value;
       }
     }
   }
@@ -532,17 +573,26 @@ main(int argc, char **argv)
 {
   /* ------- Variables ------- */
   pthread_barrier_t       epbarrier;
+#ifndef GPU_SOURCE
   pthread_barrier_t       srcbarrier;
-  struct EPThreadArg      *eparg;
   struct SourceThreadArg  *sarg;
   struct IdleThreadArg    *iarg;
+#endif
+  struct EPThreadArg      *eparg;
 
   int                     opt;
+#ifndef GPU_SOURCE
   pthread_t               tid;
   uint64_t cores_per_socket, sockets, total_cpu;
+  uint64_t num_idle = 0;
+#endif
+#ifdef GPU_SOURCE
+  uint64_t gpu_events = 0;
+  uint64_t gpu_interval_ns = 0;
+#endif
   double event_rate;
   int id = 0;
-  uint64_t num_idle = 0, cpuid = 1;
+  uint64_t cpuid = 1;
   int work_perc = 100; // percent memwork
 
   srand((unsigned)time(NULL)); // uniquely setting rand val seed
@@ -595,12 +645,26 @@ main(int argc, char **argv)
     exit(EXIT_FAILURE);
   }
 
+#ifdef GPU_SOURCE
+  if (Num_Sources != 1) {
+    fprintf(stderr, "GPU_SOURCE currently supports exactly one source\n");
+    exit(EXIT_FAILURE);
+  }
+#endif
+
   double event_rate_per_source = event_rate / (double)Num_Sources;
   double srcsleep                       = 1.0/event_rate_per_source;
+#ifdef GPU_SOURCE
+  gpu_events = (uint64_t)(event_rate_per_source * SECTORUN);
+  if ((event_rate > 0.0) && (gpu_events == 0)) { gpu_events = 1; }
+  gpu_interval_ns = (uint64_t)((double)NSEC_IN_SECOND / event_rate_per_source);
+#endif
   
   
+#ifndef GPU_SOURCE
   getCPUInfo(&cores_per_socket, &sockets);
   total_cpu = cores_per_socket * sockets;
+#endif
   
 
   /* ------- Init Signal Handler ------- */
@@ -616,7 +680,16 @@ main(int argc, char **argv)
 
   /* ------- Init Event Processors ------- */
   // eventSignal initalization will be handled by the EP thread
+  #ifdef GPU_SOURCE
+  if (gpu_managed_alloc((void **)&Processors, // Processor is a pointer to EventProcessor struct
+                        sizeof(struct EventProcessor) * Num_Processors) != 0) {
+    fprintf(stderr, "gpu_managed_alloc(Processors): %s\n",
+            gpu_source_last_error());
+    exit(EXIT_FAILURE);
+  }
+#else
   Processors = malloc(sizeof(struct EventProcessor) * Num_Processors);
+#endif
 
   for (int i=0; i<Num_Processors; i++) {
     ep_t eproc = &Processors[i];
@@ -630,7 +703,9 @@ main(int argc, char **argv)
     eparg->ep = &(Processors[i]);
     eparg->cpu = cpuid++;
     eparg->barrier = &epbarrier;
+#ifndef GPU_SOURCE
     wfey_hwmon_joules_read(eparg->cpu); // cache the paths
+#endif
 
     eparg->ep->end_flag = 0;
     pthread_create(&eparg->ep->tid, NULL, epThread, eparg);
@@ -645,7 +720,16 @@ main(int argc, char **argv)
 
 
   /* ------- Init Sources ------- */
+  #ifdef GPU_SOURCE
+  if (gpu_managed_alloc((void **)&Sources,
+                        sizeof(struct Source) * Num_Sources) != 0) {
+    fprintf(stderr, "gpu_managed_alloc(Sources): %s\n",
+            gpu_source_last_error());
+    exit(EXIT_FAILURE);
+  }
+#else
   Sources = malloc(sizeof(struct Source) * Num_Sources);
+#endif
   
   for (int i=0; i<Num_Sources; i++) {
     source_t src = &Sources[i];
@@ -656,8 +740,15 @@ main(int argc, char **argv)
     src->minns   = (uint64_t)-1;
     src->maxns   = 0;
     src->count   = 0;
+#ifdef GPU_SOURCE
+    src->ep = choose_ep(Processors);
+    src->work_type = NULL_WORK;
+    src->work_func = &nullwork;
+    src->end_flag = 0;
+#endif
   }
 
+#ifndef GPU_SOURCE
   /* ------- Run Source Threads ------- */
   pthread_barrier_init(&srcbarrier, NULL, Num_Sources+1); // set up barrier for all src to init
   for (int i=0; i<Num_Sources; i++) {
@@ -704,12 +795,30 @@ main(int argc, char **argv)
     pthread_create(&tid, NULL, idleThread, iarg);
   } 
 
+#endif
+
   pinCpu(RUNNER_CPU, "main thread");
 
   // Start the Benchmark (Sources)
+#ifdef GPU_SOURCE
+  if (gpu_source_start(&(Processors[0].eventSignal.db),
+                       &(Sources[0].event.state),
+                       gpu_events, gpu_interval_ns) != 0) {
+    fprintf(stderr, "gpu_source_start: %s\n", gpu_source_last_error());
+    exit(EXIT_FAILURE);
+  }
+#else
   pthread_barrier_wait(&srcbarrier);
+#endif
   
   usleep(TIMETORUN);
+
+#ifdef GPU_SOURCE
+  if (gpu_source_synchronize() != 0) {
+    fprintf(stderr, "gpu_source_synchronize: %s\n", gpu_source_last_error());
+    exit(EXIT_FAILURE);
+  }
+#endif
 
   for (int i=0; i < Num_Processors; i++) {
     ep_t ep = &Processors[i];
@@ -721,6 +830,7 @@ main(int argc, char **argv)
   // Wait for event processor to finish
   pthread_barrier_wait(&epbarrier);
   
+#ifndef GPU_SOURCE
   // Extra verification sources not stuck in sleep
   // Individual flags sent because dont want to send a signal
   // to an already cleaned up source
@@ -732,6 +842,7 @@ main(int argc, char **argv)
   
   // Wait for all source and idle threads to clean up and return
   pthread_barrier_wait(&endbarrier);
+#endif
   
   /* ------- Latency Logging ------- */
   /// TODO -- possible segfault occuring with the latency
@@ -740,18 +851,27 @@ main(int argc, char **argv)
   fprintf(stdout, "SRC_ID,WorkType,Latency_Min,Latency_Max,Latency_Mean\n");
   for (int i=0; i<Num_Sources; i++) {
     source_t src = &Sources[i];
+#ifdef GPU_SOURCE
+    src->minns = 0; src->maxns = 0; mean = (src->count == 0) ? -1 : 0;
+#else
     if(src->count == 0) { // never got a chance to finish event
       src->minns = 0; src->maxns = 0; mean = -1;
     } else {
       mean = (src->totalns / (double)src->count);
     }
+#endif
     fprintf(stdout, "%d,%s,%"PRIu64",%"PRIu64",%.2f\n",
 	    src->id, printWorkType(src->work_type), src->minns, src->maxns, mean);
   }
   fflush(stdout);
 
+#ifdef GPU_SOURCE
+  gpu_managed_free(Sources);
+  gpu_managed_free(Processors);
+#else
   free(Sources);
   free(Processors);
+#endif
   exit(EXIT_SUCCESS);
 }
  
