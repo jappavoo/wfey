@@ -142,7 +142,7 @@ armMonitor(volatile void *addr)
 {
   uint64_t value;
   asm volatile( "ldaxr %0, [%1]\n\t"
-		 : "=&r" (value) : "r" (&addr));
+		 : "=&r" (value) : "r" (addr));
   return value;
 }
 
