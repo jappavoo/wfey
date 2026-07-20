@@ -77,13 +77,6 @@ void source_event_reset(union Event *event) {
 /* #endif */
 }
 
-#ifdef GPU_SOURCE
-void gpu_source_event_reset(source_t this) {
-  __atomic_store_n(&(this->event.state), SRC_EVENT_RESET,
-                   __ATOMIC_SEQ_CST);
-  this->count++;
-}
-#endif
 
 static inline double compwork() {
   int x, y;
@@ -725,6 +718,8 @@ main(int argc, char **argv)
   /* ------- Init Event Processors ------- */
   // eventSignal initalization will be handled by the EP thread
   struct EventProcessor *Processors = NULL;
+// in mailbox version, memory for event processors may not need to be allocated as unified memory, 
+// since doorbell can be access through Sources[0].mb->db.db
 #ifdef GPU_SOURCE
   if (gpu_managed_alloc((void **)&Processors, // Processor is a pointer to EventProcessor struct
                         sizeof(struct EventProcessor) * Num_Processors) != 0) {
@@ -861,7 +856,7 @@ main(int argc, char **argv)
   for (int i = source_end; i < total_cpu; i++){ 
     iarg = malloc(sizeof(struct IdleThreadArg));
     iarg->cpu = i;
-    iarg->barrier = &endbarrier; // TODO -- is this used in struct?
+    iarg->barrier = &endbarrier; // TODO -- is this used in struct? JF: currently not used, maybe we can force it used in IdleThread function, or we can just remove it.
     pthread_create(&tid, NULL, idleThread, iarg);
   } 
 
