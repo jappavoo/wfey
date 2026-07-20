@@ -47,5 +47,22 @@ wfey_hwmon.o: wfey_hwmon.c ${INCLUDES}/wfey_hwmon.h
 hwmon_test: wfey_hwmon.c ${INCLUDES}/wfey_hwmon.h
 	${CC} -D __STAND_ALONE__ ${CFLAGS} -o $@ $^
 
+gpu_source.o: gpu_source.cu include/gpu_source.h
+	nvcc -O0 -g -std=c++17 -c -o $@ gpu_source.cu
+
+wfe_db_mon_gpu_src.o: wfey.c include/gpu_source.h
+	${CC} ${CFLAGS} -c -DUSE_DOORBELL -DUSE_MONITOR -DGPU_SOURCE -o $@ wfey.c
+
+wfe_db_mon_gpu_src: wfe_db_mon_gpu_src.o wfey_hwmon.o gpu_source.o logging.o
+	nvcc -o $@ $^ ${LIBRARIES}
+
+cuda_doorbell_smoke: cuda_doorbell_smoke.cu
+	nvcc -O0 -g -std=c++17 -o $@ $<
+
+cuda_wfe_doorbell_smoke: cuda_wfe_doorbell_smoke.cu
+	nvcc -O0 -g -std=c++17 -Xcompiler -pthread -o $@ $<
+
 clean:
-	rm -f $(wildcard *~ *.o *.d *.h.gch *.out ${TARGETS})
+	rm -f $(wildcard *~ *.o *.d *.h.gch *.out ${TARGETS} wfe_db_mon_gpu_src cuda_doorbell_smoke cuda_wfe_doorbell_smoke)
+
+-include $(wildcard *.d)

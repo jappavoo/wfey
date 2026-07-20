@@ -36,6 +36,22 @@
 *.x86_64
 *.hex
 
+# Top-level benchmark binaries
+/busypoll_db
+/busypoll_nodb
+/wfe_nodb
+/wfe_db_nomon
+/wfe_db_mon
+/wfe_db_mon_gpu_src
+/hwmon_test
+/cuda_doorbell_smoke
+/cuda_wfe_doorbell_smoke
+
+# Basic test binaries
+/basic_tests/busy
+/basic_tests/sev
+/basic_tests/wfe
+
 # Debug files
 *.dSYM/
 *.su
