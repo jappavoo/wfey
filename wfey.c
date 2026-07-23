@@ -26,18 +26,14 @@ bool source_event_isActive(volatile int state)
 			 __ATOMIC_SEQ_CST) == SRC_EVENT_ACTIVE;
 }
 
-int source_event_activate(union Event *event)  {
+void source_event_activate(union Event *event)  {
   // if already active then don't continue
   // already processing an event
   // relay this back to source so no signal sent
-  if (source_event_isActive(event->state)) {
-    return -1;
-  }
+  // 
   // ts_now(&(this->start_ts));
   //__atomic_store_n(&(this->event.state), SRC_EVENT_ACTIVE, __ATOMIC_SEQ_CST);
   __atomic_store_n(&event->state, SRC_EVENT_ACTIVE, __ATOMIC_SEQ_CST);
-
-  return 0;
 }
 
 void source_event_reset(union Event *event) {
@@ -260,8 +256,9 @@ EP_handle_event(ep_t this, struct MailBox_Slot mb)
 
   ts_t timestamp;
   ts_now(&timestamp);
-  source_event_reset(mb.event);
+  //fprintf(stderr, "Processor writing event num:%d\n", mb.event_num);
   buffer_write(mb.event_num, mb.id, this->id, timestamp);
+  source_event_reset(mb.event);
 }
 
   
@@ -518,11 +515,13 @@ void * sourceThread(void *arg) {
       }
       ndelay = nrem;
     }
-    if (source_event_activate(&this->event) == -1) {
+    mb_slot->event_num = eventnum;
+    if ( source_event_isActive(this->event.state) == true) {
       continue;
     } else {
-      mb_slot->event_num = eventnum;
+      source_event_activate(&this->event);
       ts_now(&timestamp);
+      //fprintf(stderr, "Source writing event num:%d\n", mb_slot->event_num);
       buffer_write(mb_slot->event_num, mb_slot->id, this->ep_id, timestamp);
       eventnum++;
     }

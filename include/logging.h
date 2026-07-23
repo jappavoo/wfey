@@ -22,7 +22,13 @@ struct Log {
 void* producer(void *arg);
 void *consumer(void *arg);
 
-void buffer_write(int eventID, int srcID, int epID, struct timespec ts);
+// inline void buffer_write(int eventID, int srcID, int epID, struct timespec
+// ts);
+static inline void buffer_write(int eventID, int srcID, int epID, struct timespec ts) {
+  struct Log_Item item = {eventID = eventID, srcID = srcID, epID = epID,
+                          ts = ts};
+  producer((void *)&item);
+}
 
 static inline void write_to_log(FILE *log, struct Log_Item data) {
   fprintf(log, "%d %d %d %ld:%ld\n", data.eventID, data.srcID, data.epID, data.ts.tv_sec, data.ts.tv_nsec);
