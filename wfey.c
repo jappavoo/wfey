@@ -31,18 +31,14 @@ bool source_event_isActive(volatile int state)
 			 __ATOMIC_SEQ_CST) == SRC_EVENT_ACTIVE;
 }
 
-int source_event_activate(union Event *event)  {
+void source_event_activate(union Event *event)  {
   // if already active then don't continue
   // already processing an event
   // relay this back to source so no signal sent
-  if (source_event_isActive(event->state)) {
-    return -1;
-  }
+  // 
   // ts_now(&(this->start_ts));
   //__atomic_store_n(&(this->event.state), SRC_EVENT_ACTIVE, __ATOMIC_SEQ_CST);
   __atomic_store_n(&event->state, SRC_EVENT_ACTIVE, __ATOMIC_SEQ_CST);
-
-  return 0;
 }
 
 void source_event_reset(union Event *event) {
@@ -266,8 +262,9 @@ EP_handle_event(ep_t this, struct MailBox_Slot mb)
 
   ts_t timestamp;
   ts_now(&timestamp);
-  source_event_reset(mb.event);
+  //fprintf(stderr, "Processor writing event num:%d\n", mb.event_num);
   buffer_write(mb.event_num, mb.id, this->id, timestamp);
+  source_event_reset(mb.event);
 }
 
   
@@ -552,11 +549,13 @@ void * sourceThread(void *arg) {
       }
       ndelay = nrem;
     }
-    if (source_event_activate(&this->event) == -1) {
+    mb_slot->event_num = eventnum;
+    if ( source_event_isActive(this->event.state) == true) {
       continue;
     } else {
-      mb_slot->event_num = eventnum;
+      source_event_activate(&this->event);
       ts_now(&timestamp);
+      //fprintf(stderr, "Source writing event num:%d\n", mb_slot->event_num);
       buffer_write(mb_slot->event_num, mb_slot->id, this->ep_id, timestamp);
       eventnum++;
     }
@@ -736,19 +735,7 @@ main(int argc, char **argv)
     eproc->id = id; id++;
     eproc->mb = &Mailboxes[eproc->id];
 
-    int shm_id;
-    void *shm;
-    if ((shm_id = shmget(IPC_PRIVATE, (sizeof(struct MailBox_Slot) * Num_Sources),
-                         IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR)) == -1) {
-      handle_error("ep shmget\n");
-    }
-    if ((shm = shmat(shm_id, NULL, 0)) == NULL) {
-      handle_error("ep shmat\n");
-    }
-
-    eproc->mem.seg_id = shm_id;
-    eproc->mem.data = shm;
-    eproc->mb->mb = (struct MailBox_Slot *)shm;
+    eproc->mb->mb = malloc(sizeof(struct MailBox_Slot) * Num_Sources);
     
     eproc->eventSignal = eproc->mb->db;
     eproc->end_flag = 0;
@@ -926,18 +913,6 @@ main(int argc, char **argv)
   // End Logging Thread
   end_flag = 1;
   pthread_join(logger_thread, NULL);
-
-  // Clean Up Shared Memory
-  for (int i=0; i < Num_Processors; i++) {
-    ep_t ep = &Processors[i];
-
-    if (shmdt(ep->mem.data) == -1) {
-      handle_error("ep shmdt\n");
-    }
-    if (shmctl(ep->mem.seg_id, IPC_RMID, 0) == -1) {
-      handle_error("ep shmctl\n");
-    }
-  }
   
   /* ------- Latency Logging ------- */
 

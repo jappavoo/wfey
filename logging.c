@@ -9,12 +9,6 @@ int read_index = 0, write_index = 0, count = 0;
 
 struct timespec wait = {1.0, 0.0};
 
-void buffer_write(int eventID, int srcID, int epID, struct timespec ts) {
-  struct Log_Item item = {eventID = eventID, srcID = srcID, epID = epID,
-                          ts = ts};
-  producer((void *)&item);
-}
-
 void *producer(void *arg) {
   struct Log_Item item = *(struct Log_Item *)arg;
 
