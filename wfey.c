@@ -657,19 +657,7 @@ main(int argc, char **argv)
     eproc->id = id; id++;
     eproc->mb = &Mailboxes[eproc->id];
 
-    int shm_id;
-    void *shm;
-    if ((shm_id = shmget(IPC_PRIVATE, (sizeof(struct MailBox_Slot) * Num_Sources),
-                         IPC_CREAT | IPC_EXCL | S_IRUSR | S_IWUSR)) == -1) {
-      handle_error("ep shmget\n");
-    }
-    if ((shm = shmat(shm_id, NULL, 0)) == NULL) {
-      handle_error("ep shmat\n");
-    }
-
-    eproc->mem.seg_id = shm_id;
-    eproc->mem.data = shm;
-    eproc->mb->mb = (struct MailBox_Slot *)shm;
+    eproc->mb->mb = malloc(sizeof(struct MailBox_Slot) * Num_Sources);
     
     eproc->eventSignal = eproc->mb->db;
     eproc->end_flag = 0;
@@ -805,18 +793,6 @@ main(int argc, char **argv)
   // End Logging Thread
   end_flag = 1;
   pthread_join(logger_thread, NULL);
-
-  // Clean Up Shared Memory
-  for (int i=0; i < Num_Processors; i++) {
-    ep_t ep = &Processors[i];
-
-    if (shmdt(ep->mem.data) == -1) {
-      handle_error("ep shmdt\n");
-    }
-    if (shmctl(ep->mem.seg_id, IPC_RMID, 0) == -1) {
-      handle_error("ep shmctl\n");
-    }
-  }
   
   /* ------- Latency Logging ------- */
 

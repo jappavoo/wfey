@@ -89,12 +89,6 @@ struct MailBox {
   struct MailBox_Slot *mb;
 };
 
-struct shm_mem {
-  int seg_id;
-  //key_t shm_key;
-  void *data;
-};
-
 // 1 mailbox per event processor
 struct MailBox *Mailboxes = NULL;
 
@@ -109,7 +103,6 @@ struct EventProcessor {
   int id;
   pthread_t tid;
   struct MailBox *mb;
-  struct shm_mem mem;
   union EventSignal eventSignal; //dont know what to do with this in the mailbox case
   volatile sig_atomic_t end_flag;
 };
